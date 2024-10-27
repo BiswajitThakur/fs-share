@@ -29,7 +29,7 @@ pub fn get_receiver_addr(name: &str, password: &[u8]) -> io::Result<Address> {
 }
 
 #[allow(unused)]
-pub fn get_sender_addr(_name: &str, password: &[u8]) -> io::Result<SocketAddr> {
+pub fn get_sender_addr(_name: &str, password: &[u8]) -> io::Result<Address> {
     let socket = UdpSocket::bind("0.0.0.0:34254")?;
     let mut buf: [u8; 32] = [0; 32];
     loop {
@@ -37,7 +37,10 @@ pub fn get_sender_addr(_name: &str, password: &[u8]) -> io::Result<SocketAddr> {
             Ok((size, addr)) => {
                 let msg = String::from_utf8_lossy(&buf[..size]);
                 if msg.contains("success") {
-                    return Ok(addr);
+                    return Ok(Address {
+                        sender: addr,
+                        receiver: socket.local_addr()?,
+                    });
                 }
                 socket.send_to(password, addr)?;
             }

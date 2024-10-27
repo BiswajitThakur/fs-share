@@ -4,7 +4,7 @@ use std::net::SocketAddr;
 
 pub use utils::{get_receiver_addr, get_sender_addr};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Address {
     pub sender: SocketAddr,
     pub receiver: SocketAddr,

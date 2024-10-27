@@ -1,0 +1,15 @@
+[package]
+name = "share-cli"
+version = "0.1.0"
+edition.workspace = true
+
+[[bin]]
+name = "sender-cli"
+path = "src/bin/sender.rs"
+
+[[bin]]
+name = "receiver-cli"
+path = "src/bin/receiver.rs"
+
+[dependencies]
+share-utils = { path = "../share-utils" }

@@ -1,6 +1,6 @@
 use std::net::TcpListener;
 
-use fs_share::get_receiver_addr;
+use share_utils::get_receiver_addr;
 
 fn main() {
     if let Ok(addr) = get_receiver_addr("Eagle BT", b"password") {
@@ -12,3 +12,4 @@ fn main() {
         }
     }
 }
+

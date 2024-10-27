@@ -3,5 +3,12 @@
 version = 3
 
 [[package]]
-name = "fs-share"
+name = "share-cli"
+version = "0.1.0"
+dependencies = [
+ "share-utils",
+]
+
+[[package]]
+name = "share-utils"
 version = "0.1.0"

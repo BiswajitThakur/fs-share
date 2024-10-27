@@ -17,8 +17,6 @@ fn main() {
 fn sender(addr: SocketAddr) -> io::Result<()> {
     let mut stream = TcpStream::connect(addr)?;
     println!("connected");
-    for line in std::io::stdin().lines() {
-        stream.write_all(line?.as_bytes())?;
-    }
+    stream.write_all(b"00500000000000000000005a.txthello")?;
     Ok(())
 }

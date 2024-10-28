@@ -1,19 +1,15 @@
 mod utils;
 
 use std::{
+    borrow::Cow,
+    fs,
     io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
+    path::{Path, PathBuf},
 };
 
 use sha2::{Digest, Sha256};
 pub use utils::{get_receiver_addr, get_sender_addr};
-
-#[allow(unused)]
-#[derive(Debug)]
-pub struct FileInfo {
-    name: String,
-    size: usize,
-}
 
 pub const PORT: u16 = 34254;
 
@@ -74,9 +70,9 @@ impl SenderFs {
             let mut stream = TcpStream::connect(addr)?;
             stream.write_all(&pass_hash)?;
             let mut buf = [0; 7];
-            let success_msg = [b's', b'u', b'c', b'c', b'e', b's', b's'];
+            let success_msg = b"success";
             stream.read_exact(&mut buf)?;
-            if buf == success_msg {
+            if &buf == success_msg {
                 self.stream = Some(stream);
                 Ok(true)
             } else {
@@ -104,6 +100,52 @@ impl SenderFs {
         } else {
             None
         }
+    }
+    pub fn send(&mut self, value: &SenderOps) -> io::Result<bool> {
+        if self.stream.is_none() {
+            return Ok(false);
+        }
+        let mut stream = self.stream.as_ref().unwrap();
+        match value {
+            // su:<user_len>:<user>:
+            SenderOps::UserInfo { user } => {
+                if user.is_none() {
+                    return Ok(false);
+                }
+                let user = user.as_ref().unwrap();
+                stream.write_all(format!("su:{}:", user.len()).as_bytes())?;
+                stream.write_all(user.as_bytes())?;
+                stream.write_all(b":")?;
+            }
+            // sf:<name_len>:<size>:<name>:<file>:
+            SenderOps::File { name } => {
+                let f = fs::File::open(name)?;
+                let f_size = f.metadata()?.len();
+                stream.write_all(b"sf:")?;
+                let f_name = name.display().to_string();
+                stream.write_all(format!("{}:{}:", f_name.len(), f_size).as_bytes())?;
+                stream.write_all(f_name.as_bytes())?;
+                stream.write_all(b":")?;
+                let mut rdr = BufReader::new(f);
+                let mut buffer: [u8; 4096] = [0; 4096];
+                loop {
+                    let r = rdr.read(&mut buffer)?;
+                    if r == 0 {
+                        break;
+                    }
+                    stream.write_all(&buffer[..r])?;
+                }
+                stream.write_all(b":")?;
+            }
+            // sm:<len>:<msg>:
+            SenderOps::Msg(v) => {
+                stream.write_all(b"sm:")?;
+                stream.write_all(format!("{}:", v.len()).as_bytes())?;
+                stream.write_all(v.as_bytes())?;
+                stream.write_all(b":")?;
+            }
+        }
+        Ok(true)
     }
 }
 
@@ -148,6 +190,7 @@ impl ReceiverFs {
                     stream.write_all(b"success")?;
                     return Ok(Some(stream));
                 } else {
+                    stream.write_all(b"wrongpw")?;
                     eprintln!(
                         "Skipped : '{}': Invalid Password send",
                         stream.local_addr()?
@@ -202,6 +245,7 @@ impl ReceiverFs {
             None
         }
     }
+    /*
     pub fn buf_reader(&self) -> io::Result<Option<BufReader<TcpStream>>> {
         if let Some(listener) = &self.listener {
             //for stream in listener.incoming() {
@@ -213,6 +257,7 @@ impl ReceiverFs {
             Ok(None)
         }
     }
+    */
 }
 
 impl TryFrom<SocketAddr> for ReceiverFs {
@@ -225,41 +270,26 @@ impl TryFrom<SocketAddr> for ReceiverFs {
     }
 }
 
-/*
-#[cfg(test)]
-mod tests {
-    use crate::{ReceiverFs, SenderFs};
-    use std::{
-        io::{Read, Write},
-        net::{IpAddr, Ipv4Addr, SocketAddr},
-    };
+#[allow(unused)]
+pub enum SenderOps<'a> {
+    UserInfo { user: Option<Cow<'a, str>> },
+    File { name: Cow<'a, Path> },
+    Msg(Cow<'a, str>),
+}
 
-    #[test]
-    fn test_connect() {
-        let receiver_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-        let receiver = ReceiverFs::try_from(receiver_addr);
-        assert!(receiver.is_ok());
-        let receiver = receiver.unwrap();
-        let port = receiver.receiver_port();
-        assert!(port.is_some());
-        let port = port.unwrap();
-        assert!(port != 0);
-        let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
-        assert_eq!(receiver.receiver_addr().unwrap(), addr);
-        let mut sender = SenderFs::default();
-        assert!(sender.connect(receiver_addr).is_err());
-        assert!(sender.connect(addr).is_ok());
-        let w: [u8; 5] = [3; 5];
-        let mut r: [u8; 5] = [0; 5];
-        {
-            let mut bf_writer = sender.buf_writer().unwrap();
-            bf_writer.write_all(&w).unwrap();
-        }
-        {
-            let mut bf_reader = receiver.buf_reader().unwrap().unwrap();
-            bf_reader.read_exact(&mut r).unwrap();
-        }
-        assert_eq!(r, w);
+/*
+impl TryFrom<&TcpStream> for SenderOps {
+    type Error = io::Error;
+    fn try_from(mut value: &TcpStream) -> Result<Self, Self::Error> {
+        let mut buf_info: [u8; 1] = [0; 1];
+        value.read_exact(&mut buf_info)?;
+        match buf_info[0] {
+            b'1' => {
+
+            }
+            _ => todo!(),
+        };
+        todo!()
     }
 }
 */

@@ -12,7 +12,9 @@ fn main() {
             .unwrap();
         for line in std::io::stdin().lines() {
             let line = line.unwrap();
-            sender.send(SenderOps::Msg(line.into())).unwrap();
+            sender
+                .send(SenderOps::Msg(format!("{}\n", line).into()))
+                .unwrap();
         }
     }
 }

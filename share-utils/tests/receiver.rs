@@ -1,8 +1,7 @@
 use share_utils::{ReceiverFs, SenderFs, SenderOps};
 use std::{
-    fs::File,
-    io::{BufReader, Cursor, Read, Write},
-    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
+    io::{BufReader, Cursor, Write},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream},
     path::Path,
     thread,
     time::Duration,
@@ -12,11 +11,8 @@ use std::{
 fn test_0() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "12345678";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -28,8 +24,11 @@ fn test_0() {
         stream.write_all(b"hello world").unwrap();
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    let mut receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"hello world";
     assert_eq!(&bf, want);
 }
@@ -38,11 +37,8 @@ fn test_0() {
 fn test_1() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "12345678";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -51,19 +47,18 @@ fn test_1() {
             .connect(addr)
             .unwrap();
     });
-    let n = receiver.connect_sender(1).unwrap();
-    assert!(n.is_none());
+    let receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_2() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let password = "12345678";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -75,8 +70,11 @@ fn test_2() {
         stream.write_all(b"hello123456789 foooooooo").unwrap();
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    let mut receiver = ReceiverFs::default()
+        .set_password("12345678".into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"hello world";
     assert_eq!(&bf[..5], &want[..5]);
     assert_ne!(&bf[5..], &want[5..]);
@@ -86,11 +84,8 @@ fn test_2() {
 fn test_3() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "password";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -102,8 +97,11 @@ fn test_3() {
         stream.write_all(b"hello world12345").unwrap();
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(9).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    let mut receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 9)
+        .unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"hello world";
     assert_eq!(&bf, want);
 }
@@ -112,11 +110,8 @@ fn test_3() {
 fn test_4() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "strong_password";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     // user woth wrong passwort
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
@@ -135,19 +130,19 @@ fn test_4() {
             .connect(addr)
             .unwrap();
     });
-    let n = receiver.connect_sender(3).unwrap();
-    assert!(n.is_some());
+    let receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 3)
+        .unwrap();
+    assert!(receiver.is_sender_connected());
 }
 
 #[test]
 fn tes_5() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "strong_password";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(200));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -164,19 +159,19 @@ fn tes_5() {
             .connect(addr)
             .unwrap();
     });
-    let n = receiver.connect_sender(1).unwrap();
-    assert!(n.is_none());
+    let receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_6() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "secret";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(700));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -199,8 +194,11 @@ fn test_6() {
     });
     thread::sleep(Duration::from_millis(800));
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(9).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    let mut receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 9)
+        .unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"abcdefghijk";
     assert_eq!(&bf[..], &want[..]);
 }
@@ -209,59 +207,56 @@ fn test_6() {
 fn test_7() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "secret123";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let _ = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_none());
+    let receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_8() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "secret123";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
         stream.write_all(b"00").unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_none());
+    let receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_9() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
         stream.write_all(b"00").unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_none());
+    let receiver = ReceiverFs::default().connect_sender(listener, 1).unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_10() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -269,16 +264,15 @@ fn test_10() {
             .write_all(b"00000000000000000000000000000000") // 32 zero
             .unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_some());
+    let receiver = ReceiverFs::default().connect_sender(listener, 1).unwrap();
+    assert!(receiver.is_sender_connected());
 }
 
 #[test]
 fn test_11() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -286,16 +280,15 @@ fn test_11() {
             .write_all(b"11111111111111111111111111111111") // 32 one
             .unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_some());
+    let receiver = ReceiverFs::default().connect_sender(listener, 1).unwrap();
+    assert!(receiver.is_sender_connected());
 }
 
 #[test]
 fn test_12() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -303,16 +296,15 @@ fn test_12() {
             .write_all(b"22222222222222222222222222222299") // 30 two, 2 nine
             .unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_some());
+    let receiver = ReceiverFs::default().connect_sender(listener, 1).unwrap();
+    assert!(receiver.is_sender_connected());
 }
 
 #[test]
 fn test_13() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -320,16 +312,15 @@ fn test_13() {
             .write_all(b"1111111111111111111111111111111") // 31 one
             .unwrap();
     });
-    let n = receiver.connect_sender(1);
-    assert!(n.is_ok());
-    assert!(n.unwrap().is_none());
+    let receiver = ReceiverFs::default().connect_sender(listener, 1).unwrap();
+    assert!(!receiver.is_sender_connected());
 }
 
 #[test]
 fn test_14() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -337,9 +328,12 @@ fn test_14() {
             .write_all(b"111111111111111111111111111111119876543210abcdefghijk") // 32 one, ....
             .unwrap();
     });
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
     let mut buffer = [0; 10];
-    n.read_exact(&mut buffer).unwrap();
+    ReceiverFs::default()
+        .connect_sender(listener, 1)
+        .unwrap()
+        .read_exact(&mut buffer)
+        .unwrap();
     let want = b"9876543210";
     assert_eq!(&buffer, want);
 }
@@ -347,8 +341,8 @@ fn test_14() {
 #[test]
 fn test_15() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let mut stream = TcpStream::connect(SocketAddr::new(addr.ip(), port)).unwrap();
@@ -358,9 +352,12 @@ fn test_15() {
         thread::sleep(Duration::from_millis(300));
         stream.write_all(b"76543210abcdefghijk").unwrap();
     });
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
     let mut buffer = [0; 10];
-    n.read_exact(&mut buffer).unwrap();
+    ReceiverFs::default()
+        .connect_sender(listener, 1)
+        .unwrap()
+        .read_exact(&mut buffer)
+        .unwrap();
     let want = b"9876543210";
     assert_eq!(&buffer, want);
 }
@@ -368,8 +365,8 @@ fn test_15() {
 #[test]
 fn test_16() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default().bind(addr).unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -381,8 +378,11 @@ fn test_16() {
         stream.write_all(b"hello world12345").unwrap();
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(9).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    ReceiverFs::default()
+        .connect_sender(listener, 9)
+        .unwrap()
+        .read_exact(&mut bf)
+        .unwrap();
     let want = b"hello world";
     assert_eq!(&bf, want);
 }
@@ -391,11 +391,8 @@ fn test_16() {
 fn test_17() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "12345678";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -407,8 +404,12 @@ fn test_17() {
         assert!(r);
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap()
+        .read_exact(&mut bf)
+        .unwrap();
     let want = b"sm:5:hello:";
     assert_eq!(&bf[..], want);
 }
@@ -417,11 +418,8 @@ fn test_17() {
 fn test_18() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "abcd";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -433,8 +431,12 @@ fn test_18() {
         assert!(r);
     });
     let mut bf = [0; 6];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap()
+        .read_exact(&mut bf)
+        .unwrap();
     let want = b"sm:0::";
     assert_eq!(&bf[..], want);
 }
@@ -443,11 +445,8 @@ fn test_18() {
 fn test_19() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "12345678";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -464,16 +463,19 @@ fn test_19() {
             .unwrap()
     });
     let mut bf = [0; 11];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    let mut receiver = ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"sm:5:hello:";
     assert_eq!(&bf[..], want);
-    n.read_exact(&mut bf).unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     let want = b"sm:5:world:";
     assert_eq!(&bf[..], want);
     let want = b"su:8:Eagle:BT:";
     let mut bf = [0; 14];
-    n.read_exact(&mut bf).unwrap();
+    receiver.read_exact(&mut bf).unwrap();
     assert_eq!(&bf[..], want);
 }
 
@@ -481,11 +483,8 @@ fn test_19() {
 fn test_20() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
     let password = "abcd";
-    let receiver = ReceiverFs::default()
-        .set_password(password.into())
-        .bind(addr)
-        .unwrap();
-    let port = receiver.receiver_port().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let port = listener.local_addr().unwrap().port();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(300));
         let addr = SocketAddr::new(addr.ip(), port);
@@ -508,8 +507,12 @@ fn test_20() {
         assert!(sender.send(SenderOps::Msg("done".into())).unwrap());
     });
     let mut bf = [0; 73];
-    let mut n = receiver.connect_sender(1).unwrap().unwrap();
-    n.read_exact(&mut bf).unwrap();
+    ReceiverFs::default()
+        .set_password(password.into())
+        .connect_sender(listener, 1)
+        .unwrap()
+        .read_exact(&mut bf)
+        .unwrap();
     let want = b"sm:10:It's me Xy:sf:11:24:xy-file.txt:abc?@123456789xyz^7**<?>:sm:4:done:";
     assert_eq!(&bf[..], want);
 }

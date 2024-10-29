@@ -165,7 +165,7 @@ impl SenderFs {
 pub struct ReceiverFs {
     user: Option<String>,
     password: Option<Vec<u8>>,
-    listener: Option<TcpListener>,
+    stream: Option<TcpStream>,
 }
 
 impl ReceiverFs {
@@ -189,37 +189,42 @@ impl ReceiverFs {
             None
         }
     }
-    pub fn bind(self, addr: SocketAddr) -> io::Result<Self> {
-        Ok(Self {
-            listener: Some(TcpListener::bind(addr)?),
-            ..self
-        })
+    #[inline(always)]
+    pub fn get_stream(self) -> Option<TcpStream> {
+        self.stream
     }
-    pub fn connect_sender(&self, limit: usize) -> io::Result<Option<TcpStream>> {
-        if let Some(ref listener) = self.listener {
-            let mut count = 0;
-            for stream in listener.incoming() {
-                count += 1;
-                let mut stream = stream?;
-                if self.verify_passw(&mut stream) {
-                    stream.write_all(b"success")?;
-                    return Ok(Some(stream));
-                } else {
-                    stream.write_all(b"wrongpw")?;
-                    eprintln!(
-                        "Skipped : '{}': Invalid Password send",
-                        stream.local_addr()?
-                    );
-                    if count >= limit {
-                        return Ok(None);
-                    }
-                    continue;
+    pub fn connect_sender(self, listener: TcpListener, limit: usize) -> io::Result<Self> {
+        let mut count: usize = 0;
+        for stream in listener.incoming() {
+            count += 1;
+            let mut stream = stream?;
+            if self.verify_passw(&mut stream) {
+                stream.write_all(b"success")?;
+                return Ok(Self {
+                    stream: Some(stream),
+                    ..self
+                });
+            } else {
+                stream.write_all(b"wrongpw")?;
+                eprintln!(
+                    "Skipped : '{}': Invalid Password send",
+                    stream.local_addr()?
+                );
+                if count >= limit {
+                    return Ok(self);
                 }
+                continue;
             }
-            Ok(None)
-        } else {
-            Ok(None)
         }
+        Ok(self)
+    }
+    #[inline(always)]
+    pub fn is_sender_connected(&self) -> bool {
+        self.stream.is_some()
+    }
+    #[inline(always)]
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.stream.as_ref().unwrap().read_exact(buf)
     }
     fn verify_passw(&self, stream: &mut TcpStream) -> bool {
         let mut buffer = [0; 32];
@@ -244,31 +249,6 @@ impl ReceiverFs {
                 Err(_) => false,
             }
         }
-    }
-
-    pub fn receiver_port(&self) -> Option<u16> {
-        if let Some(ref listener) = self.listener {
-            Some(listener.local_addr().ok()?.port())
-        } else {
-            None
-        }
-    }
-    pub fn receiver_addr(&self) -> Option<SocketAddr> {
-        if let Some(ref listener) = self.listener {
-            Some(listener.local_addr().ok()?)
-        } else {
-            None
-        }
-    }
-}
-
-impl TryFrom<SocketAddr> for ReceiverFs {
-    type Error = io::Error;
-    fn try_from(value: SocketAddr) -> Result<Self, Self::Error> {
-        Ok(Self {
-            listener: Some(TcpListener::bind(value)?),
-            ..Default::default()
-        })
     }
 }
 

@@ -1,21 +1,20 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
     thread,
     time::Duration,
 };
 
 use share_utils::{ReceiverFs, SenderFs};
-
 #[test]
 fn test_0() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default()
-        .set_password("password".into())
-        .bind(addr)
-        .unwrap();
-    let addr = receiver.receiver_addr().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        receiver.connect_sender(999).unwrap();
+        ReceiverFs::default()
+            .set_password("password".into())
+            .connect_sender(listener, 999)
+            .unwrap();
     });
     thread::sleep(Duration::from_millis(300));
     assert!(SenderFs::default()
@@ -28,13 +27,13 @@ fn test_0() {
 #[test]
 fn test_1() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default()
-        .set_password("password".into())
-        .bind(addr)
-        .unwrap();
-    let addr = receiver.receiver_addr().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        receiver.connect_sender(999).unwrap();
+        ReceiverFs::default()
+            .set_password("password".into())
+            .connect_sender(listener, 999)
+            .unwrap();
     });
     thread::sleep(Duration::from_millis(300));
     assert!(!SenderFs::default()
@@ -47,13 +46,13 @@ fn test_1() {
 #[test]
 fn test_2() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default()
-        .set_password("password".into())
-        .bind(addr)
-        .unwrap();
-    let addr = receiver.receiver_addr().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        receiver.connect_sender(999).unwrap();
+        ReceiverFs::default()
+            .set_password("password".into())
+            .connect_sender(listener, 999)
+            .unwrap();
     });
     thread::sleep(Duration::from_millis(300));
     assert!(!SenderFs::default()
@@ -71,13 +70,13 @@ fn test_2() {
 #[test]
 fn test_3() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default()
-        .set_password("password".into())
-        .bind(addr)
-        .unwrap();
-    let addr = receiver.receiver_addr().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        receiver.connect_sender(1).unwrap();
+        ReceiverFs::default()
+            .set_password("password".into())
+            .connect_sender(listener, 1)
+            .unwrap();
     });
     thread::sleep(Duration::from_millis(300));
     assert!(!SenderFs::default()
@@ -94,13 +93,13 @@ fn test_3() {
 #[test]
 fn test_4() {
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let receiver = ReceiverFs::default()
-        .set_password("123456789".into())
-        .bind(addr)
-        .unwrap();
-    let addr = receiver.receiver_addr().unwrap();
+    let listener = TcpListener::bind(addr).unwrap();
+    let addr = listener.local_addr().unwrap();
     thread::spawn(move || {
-        receiver.connect_sender(999).unwrap();
+        ReceiverFs::default()
+            .set_password("123456789".into())
+            .connect_sender(listener, 999)
+            .unwrap();
     });
     thread::sleep(Duration::from_millis(300));
     assert!(SenderFs::default()

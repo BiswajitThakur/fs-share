@@ -2,10 +2,9 @@ mod utils;
 
 use std::{
     borrow::Cow,
-    fs,
     io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
+    path::Path,
 };
 
 use sha2::{Digest, Sha256};
@@ -61,7 +60,7 @@ impl SenderFs {
             None
         }
     }
-    pub fn connect(&mut self, addr: SocketAddr) -> io::Result<bool> {
+    pub fn connect(self, addr: SocketAddr) -> io::Result<Self> {
         if let Some(ref password) = self.password {
             let rev: Vec<u8> = password.iter().rev().map(|v| *v).collect();
             let mut hasher = Sha256::new();
@@ -73,16 +72,24 @@ impl SenderFs {
             let success_msg = b"success";
             stream.read_exact(&mut buf)?;
             if &buf == success_msg {
-                self.stream = Some(stream);
-                Ok(true)
+                Ok(Self {
+                    stream: Some(stream),
+                    ..self
+                })
             } else {
-                Ok(false)
+                Ok(self)
             }
         } else {
             let stream = TcpStream::connect(addr)?;
-            self.stream = Some(stream);
-            Ok(true)
+            Ok(Self {
+                stream: Some(stream),
+                ..self
+            })
         }
+    }
+    #[inline(always)]
+    pub fn is_connected(&self) -> bool {
+        self.stream.is_some()
     }
     pub fn buf_writer(&self) -> Option<BufWriter<&TcpStream>> {
         if let Some(w) = &self.stream {
@@ -91,8 +98,11 @@ impl SenderFs {
             None
         }
     }
-    pub fn set_password(&mut self, password: Vec<u8>) {
-        self.password = Some(password);
+    pub fn set_password(self, password: Vec<u8>) -> Self {
+        Self {
+            password: Some(password),
+            ..self
+        }
     }
     pub fn get_password(&self) -> Option<&[u8]> {
         if let Some(ref password) = self.password {
@@ -101,7 +111,7 @@ impl SenderFs {
             None
         }
     }
-    pub fn send(&mut self, value: &SenderOps) -> io::Result<bool> {
+    pub fn send(&mut self, value: SenderOps) -> io::Result<bool> {
         if self.stream.is_none() {
             return Ok(false);
         }
@@ -118,18 +128,19 @@ impl SenderFs {
                 stream.write_all(b":")?;
             }
             // sf:<name_len>:<size>:<name>:<file>:
-            SenderOps::File { name } => {
-                let f = fs::File::open(name)?;
-                let f_size = f.metadata()?.len();
+            SenderOps::File {
+                name,
+                len,
+                mut reader,
+            } => {
                 stream.write_all(b"sf:")?;
                 let f_name = name.display().to_string();
-                stream.write_all(format!("{}:{}:", f_name.len(), f_size).as_bytes())?;
+                stream.write_all(format!("{}:{}:", f_name.len(), len).as_bytes())?;
                 stream.write_all(f_name.as_bytes())?;
                 stream.write_all(b":")?;
-                let mut rdr = BufReader::new(f);
-                let mut buffer: [u8; 4096] = [0; 4096];
+                let mut buffer: [u8; 1024 * 8] = [0; 1024 * 8];
                 loop {
-                    let r = rdr.read(&mut buffer)?;
+                    let r = reader.read(&mut buffer)?;
                     if r == 0 {
                         break;
                     }
@@ -154,7 +165,6 @@ impl SenderFs {
 pub struct ReceiverFs {
     user: Option<String>,
     password: Option<Vec<u8>>,
-    sender: Option<SocketAddr>,
     listener: Option<TcpListener>,
 }
 
@@ -166,8 +176,11 @@ impl ReceiverFs {
             ..Default::default()
         }
     }
-    pub fn set_password(&mut self, password: Vec<u8>) {
-        self.password = Some(password);
+    pub fn set_password(self, password: Vec<u8>) -> Self {
+        Self {
+            password: Some(password),
+            ..self
+        }
     }
     pub fn get_password(&self) -> Option<&[u8]> {
         if let Some(ref password) = self.password {
@@ -176,9 +189,11 @@ impl ReceiverFs {
             None
         }
     }
-    pub fn bind(&mut self, addr: SocketAddr) -> io::Result<()> {
-        self.listener = Some(TcpListener::bind(addr)?);
-        Ok(())
+    pub fn bind(self, addr: SocketAddr) -> io::Result<Self> {
+        Ok(Self {
+            listener: Some(TcpListener::bind(addr)?),
+            ..self
+        })
     }
     pub fn connect_sender(&self, limit: usize) -> io::Result<Option<TcpStream>> {
         if let Some(ref listener) = self.listener {
@@ -245,19 +260,6 @@ impl ReceiverFs {
             None
         }
     }
-    /*
-    pub fn buf_reader(&self) -> io::Result<Option<BufReader<TcpStream>>> {
-        if let Some(listener) = &self.listener {
-            //for stream in listener.incoming() {
-            if let Some(stream) = listener.incoming().next() {
-                return Ok(Some(BufReader::new(stream?)));
-            }
-            Ok(None)
-        } else {
-            Ok(None)
-        }
-    }
-    */
 }
 
 impl TryFrom<SocketAddr> for ReceiverFs {
@@ -272,24 +274,13 @@ impl TryFrom<SocketAddr> for ReceiverFs {
 
 #[allow(unused)]
 pub enum SenderOps<'a> {
-    UserInfo { user: Option<Cow<'a, str>> },
-    File { name: Cow<'a, Path> },
+    UserInfo {
+        user: Option<Cow<'a, str>>,
+    },
+    File {
+        name: Cow<'a, Path>,
+        len: usize,
+        reader: Box<BufReader<dyn io::Read>>,
+    },
     Msg(Cow<'a, str>),
 }
-
-/*
-impl TryFrom<&TcpStream> for SenderOps {
-    type Error = io::Error;
-    fn try_from(mut value: &TcpStream) -> Result<Self, Self::Error> {
-        let mut buf_info: [u8; 1] = [0; 1];
-        value.read_exact(&mut buf_info)?;
-        match buf_info[0] {
-            b'1' => {
-
-            }
-            _ => todo!(),
-        };
-        todo!()
-    }
-}
-*/

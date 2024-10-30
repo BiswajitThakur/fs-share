@@ -1,7 +1,9 @@
 mod utils;
 
+use core::panic;
 use std::{
     borrow::Cow,
+    fs,
     io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::Path,
@@ -52,6 +54,10 @@ impl SenderFs {
             password,
             ..Default::default()
         }
+    }
+    #[inline(always)]
+    pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        self.stream.as_ref().unwrap().read_exact(buf)
     }
     pub fn get_stream(&self) -> Option<&TcpStream> {
         if let Some(ref stream) = self.stream {
@@ -116,6 +122,7 @@ impl SenderFs {
             return Ok(false);
         }
         let mut stream = self.stream.as_ref().unwrap();
+        let mut buf = [0u8; 4];
         match value {
             // su:<user_len>:<user>:
             SenderOps::UserInfo { user } => {
@@ -155,6 +162,10 @@ impl SenderFs {
                 stream.write_all(v.as_bytes())?;
                 stream.write_all(b":")?;
             }
+        }
+        stream.read_exact(&mut buf)?;
+        if &buf != b"done" {
+            panic!("Faild to send....");
         }
         Ok(true)
     }
@@ -226,6 +237,104 @@ impl ReceiverFs {
     pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
         self.stream.as_ref().unwrap().read_exact(buf)
     }
+    pub fn receive(&mut self) -> io::Result<ReceiverOps> {
+        if !self.is_sender_connected() {
+            return Ok(ReceiverOps::None);
+        }
+        let mut stream = self.stream.as_ref().unwrap();
+        let mut header_buf: [u8; 3] = [0; 3];
+        let mut buffer: [u8; 1024 * 16] = [0; 1024 * 16];
+        let mut buf: [u8; 1] = [0; 1];
+        stream.read_exact(&mut header_buf)?;
+        match &header_buf {
+            b"sm:" => {
+                let mut msg_len = 0usize;
+                let mut readed = 0usize;
+                loop {
+                    stream.read_exact(&mut buf)?;
+                    if buf[0] == b':' {
+                        break;
+                    }
+                    msg_len *= 10;
+                    msg_len += buf[0] as usize - b'0' as usize;
+                }
+                let mut s = String::with_capacity(msg_len);
+                loop {
+                    let r = stream.read(&mut buffer)?;
+                    readed += r;
+                    if readed <= msg_len {
+                        s.push_str(&String::from_utf8_lossy(&buffer[..r]));
+                    } else {
+                        s.push_str(&String::from_utf8_lossy(&buffer[..r - 1]));
+                        if buffer[r - 1] != b':' {
+                            panic!("Msg end with unexpected char...");
+                        }
+                        break;
+                    }
+                }
+                stream.write_all(b"done")?;
+                return Ok(ReceiverOps::Msg(s.into()));
+            }
+            b"sf:" => {
+                // sf:<name_len>:<size>:<name>:<file>:
+                let mut name_len = 0usize;
+                let mut file_len = 0usize;
+                let mut readed = 0usize;
+                loop {
+                    stream.read_exact(&mut buf)?;
+                    if buf[0] == b':' {
+                        break;
+                    }
+                    name_len *= 10;
+                    name_len += buf[0] as usize - b'0' as usize;
+                }
+                loop {
+                    stream.read_exact(&mut buf)?;
+                    if buf[0] == b':' {
+                        break;
+                    }
+                    file_len *= 10;
+                    file_len += buf[0] as usize - b'0' as usize;
+                }
+                let mut i = 0;
+                let mut f_name = String::with_capacity(name_len);
+                while i < name_len {
+                    stream.read_exact(&mut buf)?;
+                    f_name.push(buf[0] as char);
+                    i += 1;
+                }
+                stream.read_exact(&mut buf)?;
+                if buf[0] != b':' {
+                    panic!("Unexpected end of file name...");
+                }
+                let f = fs::File::create("/sdcard/file.mkv")?;
+                let mut buf_writer = BufWriter::new(f);
+                loop {
+                    let r = stream.read(&mut buffer)?;
+                    readed += r;
+                    if readed <= file_len {
+                        buf_writer.write_all(&buffer[..r])?;
+                        print!("File receiving: {}%\r", (readed / file_len) * 100);
+                    } else {
+                        buf_writer.write_all(&buffer[..r - 1])?;
+                        if buffer[r - 1] != b':' {
+                            panic!("Unexpected end of file...");
+                        }
+                        print!("File receiving: {}%\r", ((readed - 1) / file_len) * 100);
+                        std::io::stdout().flush()?;
+                        break;
+                    }
+                    std::io::stdout().flush()?;
+                }
+                stream.write_all(b"done")?;
+                return Ok(ReceiverOps::File {
+                    name: Path::new("tmp.file").into(),
+                    size: file_len,
+                });
+            }
+            _ => Ok(ReceiverOps::None),
+        }
+    }
     fn verify_passw(&self, stream: &mut TcpStream) -> bool {
         let mut buffer = [0; 32];
         if let Some(ref pass) = self.password {
@@ -252,7 +361,6 @@ impl ReceiverFs {
     }
 }
 
-#[allow(unused)]
 pub enum SenderOps<'a> {
     UserInfo {
         user: Option<Cow<'a, str>>,
@@ -262,5 +370,12 @@ pub enum SenderOps<'a> {
         len: usize,
         reader: Box<BufReader<dyn io::Read>>,
     },
+    Msg(Cow<'a, str>),
+}
+#[derive(Debug)]
+pub enum ReceiverOps<'a> {
+    None,
+    UserInfo { user: Option<Cow<'a, str>> },
+    File { name: Cow<'a, Path>, size: usize },
     Msg(Cow<'a, str>),
 }

@@ -1,60 +1,60 @@
+use share_utils::{ReceiverFs, SenderFs};
 use std::{
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener},
+    sync::mpsc,
     thread,
-    time::Duration,
 };
 
-use share_utils::{ReceiverFs, SenderFs};
+const ADDR: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
+
 #[test]
 fn test_0() {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let listener = TcpListener::bind(addr).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let listener = TcpListener::bind(ADDR).unwrap();
+        tx.send(listener.local_addr().unwrap()).unwrap();
         ReceiverFs::default()
             .set_password("password".into())
             .connect_sender(listener, 999)
             .unwrap();
     });
-    thread::sleep(Duration::from_millis(300));
     assert!(SenderFs::default()
         .set_password("password".into())
-        .connect(addr)
+        .connect(rx.recv().unwrap())
         .unwrap()
         .is_connected());
 }
 
 #[test]
 fn test_1() {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let listener = TcpListener::bind(addr).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let listener = TcpListener::bind(ADDR).unwrap();
+        tx.send(listener.local_addr().unwrap()).unwrap();
         ReceiverFs::default()
             .set_password("password".into())
             .connect_sender(listener, 999)
             .unwrap();
     });
-    thread::sleep(Duration::from_millis(300));
     assert!(!SenderFs::default()
         .set_password("12345678".into())
-        .connect(addr)
+        .connect(rx.recv().unwrap())
         .unwrap()
         .is_connected());
 }
 
 #[test]
 fn test_2() {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let listener = TcpListener::bind(addr).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let listener = TcpListener::bind(ADDR).unwrap();
+        tx.send(listener.local_addr().unwrap()).unwrap();
         ReceiverFs::default()
             .set_password("password".into())
             .connect_sender(listener, 999)
             .unwrap();
     });
-    thread::sleep(Duration::from_millis(300));
+    let addr = rx.recv().unwrap();
     assert!(!SenderFs::default()
         .set_password("12345678".into())
         .connect(addr)
@@ -69,16 +69,16 @@ fn test_2() {
 
 #[test]
 fn test_3() {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let listener = TcpListener::bind(addr).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let listener = TcpListener::bind(ADDR).unwrap();
+        tx.send(listener.local_addr().unwrap()).unwrap();
         ReceiverFs::default()
             .set_password("password".into())
             .connect_sender(listener, 1)
             .unwrap();
     });
-    thread::sleep(Duration::from_millis(300));
+    let addr = rx.recv().unwrap();
     assert!(!SenderFs::default()
         .set_password("12345678".into())
         .connect(addr)
@@ -92,16 +92,16 @@ fn test_3() {
 
 #[test]
 fn test_4() {
-    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 0);
-    let listener = TcpListener::bind(addr).unwrap();
-    let addr = listener.local_addr().unwrap();
+    let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
+        let listener = TcpListener::bind(ADDR).unwrap();
+        tx.send(listener.local_addr().unwrap()).unwrap();
         ReceiverFs::default()
             .set_password("123456789".into())
             .connect_sender(listener, 999)
             .unwrap();
     });
-    thread::sleep(Duration::from_millis(300));
+    let addr = rx.recv().unwrap();
     assert!(SenderFs::default()
         .set_password("123456789".into())
         .connect(addr)

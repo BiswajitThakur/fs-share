@@ -372,7 +372,7 @@ pub enum SenderOps<'a> {
     },
     Msg(Cow<'a, str>),
 }
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum ReceiverOps<'a> {
     None,
     UserInfo { user: Option<Cow<'a, str>> },

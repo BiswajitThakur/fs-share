@@ -5,14 +5,30 @@ use std::{
     borrow::Cow,
     fs,
     io::{self, BufReader, BufWriter, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::Path,
+    time::Duration,
 };
 
 use sha2::{Digest, Sha256};
 pub use utils::{get_receiver_addr, get_sender_addr};
 
 pub const PORT: u16 = 34254;
+
+pub const BRODCAST_ADDR: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(225, 225, 225, 225)), 7879);
+
+pub fn receiver_addr(name: &str, password: &[u8]) -> io::Result<Option<SocketAddr>> {
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.set_broadcast(true)?;
+    socket.set_read_timeout(Some(Duration::from_secs(2)))?;
+    let mut buffer: [u8; 32] = [0; 32];
+    let msg = format!("sr:{}:{}", name.len(), name);
+    loop {
+        socket.send_to(, addr);
+    }
+    todo!()
+}
 
 pub fn create_tcp_connection<F: Fn(TcpStream) -> io::Result<()>>(
     addr: Address,

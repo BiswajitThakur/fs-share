@@ -4,5 +4,5 @@ use cli::Cli;
 mod cli;
 
 fn main() {
-    Cli::parse().run();
+    Cli::parse().run().unwrap();
 }

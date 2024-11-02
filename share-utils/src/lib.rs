@@ -11,23 +11,66 @@ use std::{
 };
 
 use sha2::{Digest, Sha256};
+use utils::sha256;
 pub use utils::{get_receiver_addr, get_sender_addr};
 
 pub const PORT: u16 = 34254;
 
-pub const BRODCAST_ADDR: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::new(225, 225, 225, 225)), 7879);
+pub const IP_ADDR: IpAddr = IpAddr::V4(Ipv4Addr::new(225, 225, 225, 225));
 
-pub fn receiver_addr(name: &str, password: &[u8]) -> io::Result<Option<SocketAddr>> {
+pub const BRODCAST_ADDR: SocketAddr = SocketAddr::new(IP_ADDR, PORT);
+
+pub fn receiver_addr(name: &str, password: &[u8]) -> io::Result<Option<(SocketAddr, String)>> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(2)))?;
-    let mut buffer: [u8; 32] = [0; 32];
-    let msg = format!("sr:{}:{}", name.len(), name);
+    let mut buffer: [u8; 64] = [0; 64];
+    let hash = sha256(password);
+    let mut has_of_hash = sha256(&hash);
+    has_of_hash.extend(b":fs-share:");
+    let msg = format!("success:{}", name);
     loop {
-        socket.send_to(, addr);
+        socket.send_to(&has_of_hash, BRODCAST_ADDR)?;
+        match socket.recv_from(&mut buffer) {
+            Ok((size, addr)) if size >= 32 && &buffer[..32] == &hash => {
+                socket.send_to(msg.as_bytes(), addr)?;
+                return Ok(Some((
+                    addr,
+                    String::from_utf8_lossy(&buffer[32..]).to_string(),
+                )));
+            }
+            _ => {}
+        }
     }
-    todo!()
+}
+
+pub fn sender_addr(name: &str, password: &[u8]) -> io::Result<Option<(SocketAddr, String)>> {
+    let socket = UdpSocket::bind(format!("0.0.0.0:{}", PORT))?;
+    let mut hash = sha256(password);
+    let mut hash_of_hash = sha256(&hash);
+    hash_of_hash.extend(b":fs-share:");
+    hash.extend(name.as_bytes().iter());
+    let mut buffer = [0; 64];
+    loop {
+        match socket.recv_from(&mut buffer) {
+            Ok((size, addr)) => {
+                if size >= 42 && &buffer[..size] == &hash_of_hash {
+                    socket.send_to(&hash, addr)?;
+                } else {
+                    return Ok(String::from_utf8_lossy(&buffer[..size])
+                        .split_once(':')
+                        .and_then(|(left, right)| {
+                            if left == "success" {
+                                Some((addr, right.to_owned()))
+                            } else {
+                                None
+                            }
+                        }));
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 pub fn create_tcp_connection<F: Fn(TcpStream) -> io::Result<()>>(

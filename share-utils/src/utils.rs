@@ -9,6 +9,66 @@ use sha2::{Digest, Sha256};
 use crate::Address;
 
 #[allow(unused)]
+#[derive(Debug, Clone, Default)]
+pub struct Connector {
+    name: Option<String>,
+    password: Vec<u8>,
+}
+
+#[allow(unused)]
+impl Connector {
+    pub fn new(name: String, password: Vec<u8>) -> Self {
+        Self {
+            name: Some(name),
+            password,
+        }
+    }
+    pub fn receiver_addr(&self) -> io::Result<Address> {
+        let name = self.name.as_ref().map_or("", |v| v);
+        let password = &self.password;
+        let socket = UdpSocket::bind("0.0.0.0:0")?;
+        socket.set_broadcast(true)?;
+        socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+        let broadcast_addr = "255.255.255.255:34254";
+        let mut buf: [u8; 32] = [0; 32];
+        loop {
+            socket.send_to(name.as_bytes(), broadcast_addr)?;
+            match socket.recv_from(&mut buf) {
+                Ok((size, addr)) if size <= 32 && &buf[..size] == password => {
+                    socket.send_to(format!("{}: success", name).as_bytes(), addr)?;
+                    return Ok(Address {
+                        sender: socket.local_addr()?,
+                        receiver: addr,
+                    });
+                }
+                _ => {}
+            };
+        }
+    }
+    pub fn sender_addr(&self) -> io::Result<Address> {
+        let name = self.name.as_ref().map_or("", |v| v);
+        let password = &self.password;
+        let socket = UdpSocket::bind("0.0.0.0:34254")?;
+        let mut buf: [u8; 32] = [0; 32];
+        loop {
+            match socket.recv_from(&mut buf) {
+                Ok((size, addr)) => {
+                    let msg = String::from_utf8_lossy(&buf[..size]);
+                    if msg.contains("success") {
+                        return Ok(Address {
+                            sender: addr,
+                            receiver: socket.local_addr()?,
+                        });
+                    }
+                    socket.send_to(password, addr)?;
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+#[allow(unused)]
 pub fn get_receiver_addr(name: &str, password: &[u8]) -> io::Result<Address> {
     let socket = UdpSocket::bind("0.0.0.0:0")?;
     socket.set_broadcast(true)?;

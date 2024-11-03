@@ -6,7 +6,8 @@ use std::{
     fs,
     io::{self, BufReader, BufWriter, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream, UdpSocket},
-    path::Path,
+    path::{Path, PathBuf},
+    str::FromStr,
     thread,
     time::Duration,
 };
@@ -308,11 +309,11 @@ impl SenderFs {
                 mut reader,
             } => {
                 stream.write_all(b"sf:")?;
-                let f_name = name.display().to_string();
-                stream.write_all(format!("{}:{}:", f_name.len(), len).as_bytes())?;
-                stream.write_all(f_name.as_bytes())?;
+                //let f_name = name.display().to_string();
+                stream.write_all(format!("{}:{}:", name.len(), len).as_bytes())?;
+                stream.write_all(name.as_bytes())?;
                 stream.write_all(b":")?;
-                let mut buffer: [u8; 1024 * 8] = [0; 1024 * 8];
+                let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 64);
                 loop {
                     let r = reader.read(&mut buffer)?;
                     if r == 0 {
@@ -410,7 +411,7 @@ impl ReceiverFs {
         }
         let mut stream = self.stream.as_ref().unwrap();
         let mut header_buf: [u8; 3] = [0; 3];
-        let mut buffer: [u8; 1024 * 16] = [0; 1024 * 16];
+        let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 64);
         let mut buf: [u8; 1] = [0; 1];
         stream.read_exact(&mut header_buf)?;
         match &header_buf {
@@ -474,24 +475,26 @@ impl ReceiverFs {
                 if buf[0] != b':' {
                     panic!("Unexpected end of file name...");
                 }
-                let f = fs::File::create("/sdcard/file.mkv")?;
+                let p = Path::new("/sdcard/Download");
+                let path: PathBuf = if p.exists() {
+                    PathBuf::from_iter([p.to_string_lossy().to_string(), f_name.to_string()].iter())
+                } else {
+                    PathBuf::from_str(&f_name).unwrap()
+                };
+                let f = fs::File::create_new(path).unwrap();
                 let mut buf_writer = BufWriter::new(f);
                 loop {
                     let r = stream.read(&mut buffer)?;
                     readed += r;
                     if readed <= file_len {
                         buf_writer.write_all(&buffer[..r])?;
-                        print!("File receiving: {}%\r", (readed / file_len) * 100);
                     } else {
                         buf_writer.write_all(&buffer[..r - 1])?;
                         if buffer[r - 1] != b':' {
                             panic!("Unexpected end of file...");
                         }
-                        print!("File receiving: {}%\r", ((readed - 1) / file_len) * 100);
-                        std::io::stdout().flush()?;
                         break;
                     }
-                    std::io::stdout().flush()?;
                 }
                 stream.write_all(b"done")?;
                 return Ok(ReceiverOps::File {
@@ -533,7 +536,7 @@ pub enum SenderOps<'a> {
         user: Option<Cow<'a, str>>,
     },
     File {
-        name: Cow<'a, Path>,
+        name: Cow<'a, str>,
         len: usize,
         reader: Box<BufReader<dyn io::Read>>,
     },

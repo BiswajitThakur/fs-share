@@ -71,7 +71,7 @@ impl Cli {
         match &self.command {
             Commands::Send(options) => {
                 let name = options.name.clone().unwrap_or("Unknown".into());
-                let addr = Connector::new(name, Vec::new())
+                let addr = Connector::new(name.clone(), Vec::new())
                     .receiver_addr()
                     .unwrap()
                     .receiver;
@@ -81,10 +81,26 @@ impl Cli {
                     .set_password("12345678".into())
                     .connect(addr)
                     .unwrap();
-                for file in &options.args {
-                    sender
-                        .send(SenderOps::Msg(file.display().to_string().into()))
-                        .unwrap();
+                for path in &options.args {
+                    if path.is_file() {
+                        let file = fs::File::open(path).unwrap();
+                        let size = file.metadata().unwrap().len();
+                        let msg = format!(
+                            "{} sending file {}\nSize: {} MB\n",
+                            &name,
+                            path.display(),
+                            size as f64 / (1024 * 1024) as f64
+                        );
+                        sender.send(SenderOps::Msg(msg.into())).unwrap();
+                        println!("Sending file: {}", path.display());
+                        sender
+                            .send(SenderOps::File {
+                                name: path.file_name().unwrap().to_string_lossy().into(),
+                                len: size as usize,
+                                reader: Box::new(BufReader::new(file)),
+                            })
+                            .unwrap();
+                    }
                 }
             }
             Commands::Receive(options) => {

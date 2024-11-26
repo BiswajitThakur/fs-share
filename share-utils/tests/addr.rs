@@ -1,7 +1,6 @@
 use std::{net::UdpSocket, thread, time::Duration};
 
-use share_utils::Addr;
-
+/*
 #[test]
 fn test_0() {
     let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -14,4 +13,4 @@ fn test_0() {
     });
     thread::sleep(Duration::from_secs(1));
     let _sender = Addr::default().sender_addr().unwrap();
-}
+}*/

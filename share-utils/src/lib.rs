@@ -1,6 +1,7 @@
 mod addr;
 mod utils;
 
+use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
     fs,
@@ -10,7 +11,7 @@ use std::{
     str::FromStr,
 };
 
-use sha2::{Digest, Sha256};
+pub use addr::{get_receiver_addr, get_sender_addr};
 pub use utils::sha256;
 
 #[allow(unused)]

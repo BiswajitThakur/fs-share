@@ -1,3 +1,6 @@
+use cli::run;
+
+mod cli;
 fn main() {
-    todo!()
+    run();
 }

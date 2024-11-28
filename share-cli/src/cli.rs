@@ -7,7 +7,7 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
-use share_utils::{get_receiver_addr, get_sender_addr, SenderFs};
+use share_utils::{get_receiver_addr, get_sender_addr, ShareFs};
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -57,14 +57,19 @@ pub fn run() {
             } else {
                 println!(".....Connect Success.....");
             }
-            let stream = stream.unwrap();
-            let mut wrt = BufWriter::new(stream);
+            let mut stream = stream.unwrap();
+            /*
+            if args.args.is_empty() {
+                stream.send_empty().unwrap();
+            }*/
+            //let mut wrt = BufWriter::new(stream);
             for line in std::io::stdin().lines() {
                 match line {
                     Ok(input) => {
-                        wrt.write_all(input.as_bytes()).unwrap();
-                        wrt.write_all(b"\n").unwrap();
-                        wrt.flush().unwrap();
+                        stream.send_msg(input).unwrap();
+                        //wrt.write_all(input.as_bytes()).unwrap();
+                        stream.write_all(b"\n").unwrap();
+                        //wrt.flush().unwrap();
                     }
                     Err(e) => {
                         eprintln!("Error reading input: {}", e);
@@ -86,13 +91,19 @@ pub fn run() {
             } else {
                 println!(".....Connect Success.....");
             }
-            let stream = stream.unwrap();
+            let mut stream = stream.unwrap();
+            loop {
+                if !stream.receive().unwrap() {
+                    break;
+                }
+            }
             //stream.send("This is massege".to_owned().into()).unwrap();
+            /*
             let rdr = BufReader::new(stream);
             let mut stdout = std::io::stderr();
             for line in rdr.lines() {
                 writeln!(stdout, "{}", line.unwrap()).unwrap();
-            }
+            }*/
         }
     }
 }

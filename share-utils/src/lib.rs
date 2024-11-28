@@ -1,417 +1,149 @@
 mod addr;
 mod utils;
 
-use core::str;
-use sha2::{Digest, Sha256};
-use std::{
-    borrow::Cow,
-    fs::{self, File},
-    io::{self, BufReader, BufWriter, Read, Write},
-    net::{SocketAddr, TcpListener, TcpStream},
-    path::{Path, PathBuf},
-    str::FromStr,
-};
+use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::{get_receiver_addr, get_sender_addr};
+use std::fmt::Write as FWrite;
+use std::{
+    fs::File,
+    io::{self, BufReader, Read, Write},
+    net::TcpStream,
+    path::Path,
+};
 pub use utils::sha256;
 
-#[allow(unused)]
-pub enum SendKind<'a> {
-    Msg(Cow<'a, str>),
-    FilesInfo(Vec<(Cow<'a, Path>, usize)>),
-    File { name: Cow<'a, Path>, file: File },
+pub trait ShareFs {
+    fn send_empty(&mut self) -> io::Result<()>;
+    fn receive(&mut self) -> io::Result<bool>;
+    fn send_msg<T: AsRef<str>>(&mut self, value: T) -> io::Result<()>;
+    fn send_info<T: AsRef<str>>(&mut self, name: T) -> io::Result<()>;
+    fn send_file<P: AsRef<Path>>(&mut self, file: P) -> io::Result<()>;
 }
 
-impl<'a, T: AsRef<str>> From<&'a T> for SendKind<'a> {
-    fn from(value: &'a T) -> Self {
-        Self::Msg(Cow::Borrowed(value.as_ref()))
+impl ShareFs for TcpStream {
+    fn send_empty(&mut self) -> io::Result<()> {
+        write!(self, ":00:")
     }
-}
-
-impl From<String> for SendKind<'_> {
-    fn from(value: String) -> Self {
-        Self::Msg(Cow::Owned(value))
-    }
-}
-
-impl<'a, T: AsRef<Path>> From<(&'a T, File)> for SendKind<'a> {
-    fn from((name, file): (&'a T, File)) -> Self {
-        Self::File {
-            name: name.as_ref().into(),
-            file,
+    fn send_msg<T: AsRef<str>>(&mut self, value: T) -> io::Result<()> {
+        let msg = value.as_ref();
+        write!(self, "msg:{}:{}", msg.as_bytes().len(), msg)?;
+        let mut v = Vec::with_capacity(4);
+        read_n_bytes(self, &mut v, 4)?;
+        let prefix = std::str::from_utf8(&v).unwrap_or_default();
+        match prefix {
+            ":ss:" => println!(".....success....."),
+            _ => {
+                eprintln!(".....Falid to Send.....");
+                std::process::exit(1);
+            }
         }
+        Ok(())
     }
-}
-
-impl From<(PathBuf, File)> for SendKind<'_> {
-    fn from((name, file): (PathBuf, File)) -> Self {
-        Self::File {
-            name: name.into(),
-            file,
-        }
-    }
-}
-
-#[allow(unused)]
-pub enum ReceiveKind {}
-
-pub trait SenderFs {
-    fn send(&mut self, value: SendKind) -> io::Result<()>;
-    fn receive(&mut self, value: ReceiveKind) -> io::Result<()>;
-}
-
-impl SenderFs for TcpStream {
-    fn send(&mut self, value: SendKind) -> io::Result<()> {
-        self.write_all(b"ggg")?;
+    fn send_info<T: AsRef<str>>(&mut self, _name: T) -> io::Result<()> {
         todo!()
     }
-    fn receive(&mut self, value: ReceiveKind) -> io::Result<()> {
+    fn send_file<P: AsRef<Path>>(&mut self, file: P) -> io::Result<()> {
+        let f_name = file
+            .as_ref()
+            .display()
+            .to_string()
+            .replace("\"", "")
+            .replace("'", "");
+        let f = File::open(file)?;
+        let file_len = f.metadata()?.len();
+        println!("Sending file: {}, size: {} bytes", &f_name, file_len);
+        write!(self, "fff:{}:{}:{}:", f_name.len(), f_name, file_len)?;
+        let mut reader = BufReader::new(f);
+        let mut buffer: Vec<u8> = vec![0; 32 * 1024];
+        let mut i = 0;
+        let pb = ProgressBar::new(file_len);
+        pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .with_key("eta", |state: &ProgressState, w: &mut dyn FWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+        .progress_chars("#>-"));
+        loop {
+            let r = reader.read(&mut buffer)?;
+            if r == 0 {
+                break;
+            }
+            i += r as u64;
+            pb.set_position(i);
+            self.write_all(&buffer[..r])?;
+        }
+        self.read_exact(&mut buffer[0..4])?;
+        let prefix = std::str::from_utf8(&buffer[0..4]).unwrap_or_default();
+        match prefix {
+            ":ss:" => pb.finish_with_message(".....success....."),
+            _ => {
+                pb.finish_with_message(".....Falid to Send.....");
+                std::process::exit(1);
+            }
+        }
+        Ok(())
+    }
+    fn receive(&mut self) -> io::Result<bool> {
+        let mut v: Vec<u8> = Vec::with_capacity(4);
+        read_n_bytes(self, &mut v, 4)?;
+        let prefix = std::str::from_utf8(&v).unwrap_or_default();
+        match prefix {
+            ":00:" => return Ok(false),
+            "msg:" => {
+                let len = read_num(self)?;
+                let mut stdout = io::stdout().lock();
+                read_n_bytes(self, &mut stdout, len)?;
+                stdout.write_all(b"\n")?;
+                self.write_all(b":ss:")?;
+                return Ok(true);
+            }
+            _ => {}
+        }
+
         todo!()
     }
 }
 
-/*
-#[allow(unused)]
-#[derive(Debug, Default)]
-pub struct SenderFs {
-    user: Option<String>,
-    password: Option<Vec<u8>>,
-    receiver: Option<SocketAddr>,
-    stream: Option<TcpStream>,
+fn read_n_bytes<R: io::Read, W: io::Write>(r: &mut R, w: &mut W, n: usize) -> io::Result<()> {
+    let mut remain = n;
+    let mut buffer = vec![0; std::cmp::min(n, 1024 * 32)];
+
+    let mut i = 0;
+    let pb = ProgressBar::new(n as u64);
+    pb.set_style(ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.cyan/blue}] {bytes}/{total_bytes} ({eta})")
+        .unwrap()
+        .with_key("eta", |state: &ProgressState, w: &mut dyn FWrite| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+        .progress_chars("#>-"));
+
+    while remain > 0 {
+        let to_read = std::cmp::min(buffer.len(), remain);
+        let read_count = r.read(&mut buffer[..to_read])?;
+        if read_count == 0 {
+            break;
+        }
+        w.write_all(&buffer[..read_count])?;
+        remain -= read_count;
+        i += read_count as u64;
+        pb.set_position(i);
+    }
+    pb.finish_and_clear();
+    Ok(())
 }
 
-impl SenderFs {
-    pub fn new(user: String, password: Option<Vec<u8>>) -> Self {
-        Self {
-            user: Some(user),
-            password,
-            ..Default::default()
+fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
+    let mut buffer = [0; 1];
+    let mut num = 0;
+    loop {
+        let c = r.read(&mut buffer)?;
+        if c == 0 || !matches!(buffer[0], b'0'..=b'9') {
+            break;
         }
-    }
-    #[inline(always)]
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.stream.as_ref().unwrap().read_exact(buf)
-    }
-    pub fn get_stream(&self) -> Option<&TcpStream> {
-        if let Some(ref stream) = self.stream {
-            Some(stream)
-        } else {
-            None
+        if num > usize::MAX / 10 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Number too large",
+            ));
         }
+        num = num * 10 + (buffer[0] - b'0') as usize;
     }
-    pub fn connect(self, addr: SocketAddr) -> io::Result<Self> {
-        if let Some(ref password) = self.password {
-            let rev: Vec<u8> = password.iter().rev().map(|v| *v).collect();
-            let mut hasher = Sha256::new();
-            hasher.update(rev);
-            let pass_hash = hasher.finalize().to_vec();
-            let mut stream = TcpStream::connect(addr)?;
-            stream.write_all(&pass_hash)?;
-            let mut buf = [0; 7];
-            let success_msg = b"success";
-            stream.read_exact(&mut buf)?;
-            if &buf == success_msg {
-                Ok(Self {
-                    stream: Some(stream),
-                    ..self
-                })
-            } else {
-                Ok(self)
-            }
-        } else {
-            let stream = TcpStream::connect(addr)?;
-            Ok(Self {
-                stream: Some(stream),
-                ..self
-            })
-        }
-    }
-    #[inline(always)]
-    pub fn is_connected(&self) -> bool {
-        self.stream.is_some()
-    }
-    pub fn buf_writer(&self) -> Option<BufWriter<&TcpStream>> {
-        if let Some(w) = &self.stream {
-            Some(BufWriter::new(w))
-        } else {
-            None
-        }
-    }
-    pub fn set_password(self, password: Vec<u8>) -> Self {
-        Self {
-            password: Some(password),
-            ..self
-        }
-    }
-    pub fn get_password(&self) -> Option<&[u8]> {
-        if let Some(ref password) = self.password {
-            Some(password)
-        } else {
-            None
-        }
-    }
-    pub fn send(&mut self, value: SenderOps) -> io::Result<bool> {
-        if self.stream.is_none() {
-            return Ok(false);
-        }
-        let mut stream = self.stream.as_ref().unwrap();
-        let mut buf = [0u8; 4];
-        match value {
-            // su:<user_len>:<user>:
-            SenderOps::UserInfo { user } => {
-                if user.is_none() {
-                    return Ok(false);
-                }
-                let user = user.as_ref().unwrap();
-                stream.write_all(format!("su:{}:", user.len()).as_bytes())?;
-                stream.write_all(user.as_bytes())?;
-                stream.write_all(b":")?;
-            }
-            // sf:<name_len>:<size>:<name>:<file>:
-            SenderOps::File {
-                name,
-                len,
-                mut reader,
-            } => {
-                stream.write_all(b"sf:")?;
-                //let f_name = name.display().to_string();
-                stream.write_all(format!("{}:{}:", name.len(), len).as_bytes())?;
-                stream.write_all(name.as_bytes())?;
-                stream.write_all(b":")?;
-                let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 64);
-                loop {
-                    let r = reader.read(&mut buffer)?;
-                    if r == 0 {
-                        break;
-                    }
-                    stream.write_all(&buffer[..r])?;
-                }
-                stream.write_all(b":")?;
-            }
-            // sm:<len>:<msg>:
-            SenderOps::Msg(v) => {
-                stream.write_all(b"sm:")?;
-                stream.write_all(format!("{}:", v.len()).as_bytes())?;
-                stream.write_all(v.as_bytes())?;
-                stream.write_all(b":")?;
-            }
-        }
-        stream.read_exact(&mut buf)?;
-        // assert!(false);
-        if &buf != b"done" {
-            panic!("Faild to send....");
-        }
-        Ok(true)
-    }
+    Ok(num)
 }
-
-#[allow(unused)]
-#[derive(Debug, Default)]
-pub struct ReceiverFs {
-    user: Option<String>,
-    password: Option<Vec<u8>>,
-    stream: Option<TcpStream>,
-}
-
-impl ReceiverFs {
-    pub fn new(user: String, password: Option<Vec<u8>>) -> Self {
-        Self {
-            user: Some(user),
-            password,
-            ..Default::default()
-        }
-    }
-    pub fn set_password(self, password: Vec<u8>) -> Self {
-        Self {
-            password: Some(password),
-            ..self
-        }
-    }
-    pub fn get_password(&self) -> Option<&[u8]> {
-        if let Some(ref password) = self.password {
-            Some(password)
-        } else {
-            None
-        }
-    }
-    #[inline(always)]
-    pub fn get_stream(self) -> Option<TcpStream> {
-        self.stream
-    }
-    pub fn connect_sender(self, listener: TcpListener, limit: usize) -> io::Result<Self> {
-        let mut count: usize = 0;
-        for stream in listener.incoming() {
-            count += 1;
-            let mut stream = stream?;
-            if self.verify_passw(&mut stream) {
-                stream.write_all(b"success")?;
-                return Ok(Self {
-                    stream: Some(stream),
-                    ..self
-                });
-            } else {
-                stream.write_all(b"wrongpw")?;
-                eprintln!(
-                    "Skipped : '{}': Invalid Password send",
-                    stream.local_addr()?
-                );
-                if count >= limit {
-                    return Ok(self);
-                }
-                continue;
-            }
-        }
-        Ok(self)
-    }
-    #[inline(always)]
-    pub fn is_sender_connected(&self) -> bool {
-        self.stream.is_some()
-    }
-    #[inline(always)]
-    pub fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        self.stream.as_ref().unwrap().read_exact(buf)
-    }
-    pub fn receive(&mut self) -> io::Result<ReceiverOps> {
-        if !self.is_sender_connected() {
-            return Ok(ReceiverOps::None);
-        }
-        let mut stream = self.stream.as_ref().unwrap();
-        let mut header_buf: [u8; 3] = [0; 3];
-        let mut buffer: Vec<u8> = Vec::with_capacity(1024 * 64);
-        let mut buf: [u8; 1] = [0; 1];
-        stream.read_exact(&mut header_buf)?;
-        match &header_buf {
-            b"sm:" => {
-                let mut msg_len = 0usize;
-                let mut readed = 0usize;
-                loop {
-                    stream.read_exact(&mut buf)?;
-                    if buf[0] == b':' {
-                        break;
-                    }
-                    msg_len *= 10;
-                    msg_len += buf[0] as usize - b'0' as usize;
-                }
-                let mut s = String::with_capacity(msg_len);
-                loop {
-                    let r = stream.read(&mut buffer)?;
-                    readed += r;
-                    if readed <= msg_len {
-                        s.push_str(&String::from_utf8_lossy(&buffer[..r]));
-                    } else {
-                        s.push_str(&String::from_utf8_lossy(&buffer[..r - 1]));
-                        if buffer[r - 1] != b':' {
-                            panic!("Msg end with unexpected char...");
-                        }
-                        break;
-                    }
-                }
-                stream.write_all(b"done")?;
-                return Ok(ReceiverOps::Msg(s.into()));
-            }
-            b"sf:" => {
-                // sf:<name_len>:<size>:<name>:<file>:
-                let mut name_len = 0usize;
-                let mut file_len = 0usize;
-                let mut readed = 0usize;
-                loop {
-                    stream.read_exact(&mut buf)?;
-                    if buf[0] == b':' {
-                        break;
-                    }
-                    name_len *= 10;
-                    name_len += buf[0] as usize - b'0' as usize;
-                }
-                loop {
-                    stream.read_exact(&mut buf)?;
-                    if buf[0] == b':' {
-                        break;
-                    }
-                    file_len *= 10;
-                    file_len += buf[0] as usize - b'0' as usize;
-                }
-                let mut i = 0;
-                let mut f_name = String::with_capacity(name_len);
-                while i < name_len {
-                    stream.read_exact(&mut buf)?;
-                    f_name.push(buf[0] as char);
-                    i += 1;
-                }
-                stream.read_exact(&mut buf)?;
-                if buf[0] != b':' {
-                    panic!("Unexpected end of file name...");
-                }
-                let p = Path::new("/sdcard/Download");
-                let path: PathBuf = if p.exists() {
-                    PathBuf::from_iter([p.to_string_lossy().to_string(), f_name.to_string()].iter())
-                } else {
-                    PathBuf::from_str(&f_name).unwrap()
-                };
-                let f = fs::File::create_new(path).unwrap();
-                let mut buf_writer = BufWriter::new(f);
-                loop {
-                    let r = stream.read(&mut buffer)?;
-                    readed += r;
-                    if readed <= file_len {
-                        buf_writer.write_all(&buffer[..r])?;
-                    } else {
-                        buf_writer.write_all(&buffer[..r - 1])?;
-                        if buffer[r - 1] != b':' {
-                            panic!("Unexpected end of file...");
-                        }
-                        break;
-                    }
-                }
-                stream.write_all(b"done")?;
-                return Ok(ReceiverOps::File {
-                    name: Path::new("tmp.file").into(),
-                    size: file_len,
-                });
-            }
-            _ => Ok(ReceiverOps::None),
-        }
-    }
-    fn verify_passw(&self, stream: &mut TcpStream) -> bool {
-        let mut buffer = [0; 32];
-        if let Some(ref pass) = self.password {
-            let rev: Vec<u8> = pass.iter().rev().map(|v| *v).collect();
-            let mut hasher = Sha256::new();
-            hasher.update(rev);
-            let want = hasher.finalize().to_vec();
-            match stream.read_exact(&mut buffer) {
-                Ok(_) => {
-                    if buffer == *want {
-                        return true;
-                    } else {
-                        return false;
-                    }
-                }
-                Err(_) => false,
-            }
-        } else {
-            match stream.read_exact(&mut buffer) {
-                Ok(_) => true,
-                Err(_) => false,
-            }
-        }
-    }
-}
-
-pub enum SenderOps<'a> {
-    UserInfo {
-        user: Option<Cow<'a, str>>,
-    },
-    File {
-        name: Cow<'a, str>,
-        len: usize,
-        reader: Box<BufReader<dyn io::Read>>,
-    },
-    Msg(Cow<'a, str>),
-}
-#[derive(Debug, PartialEq, Eq)]
-pub enum ReceiverOps<'a> {
-    None,
-    UserInfo { user: Option<Cow<'a, str>> },
-    File { name: Cow<'a, Path>, size: usize },
-    Msg(Cow<'a, str>),
-}*/

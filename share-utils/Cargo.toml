@@ -5,4 +5,4 @@ edition.workspace = true
 
 [dependencies]
 sha2 = "0.10"
-
+indicatif = "0.17.9"

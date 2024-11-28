@@ -1,10 +1,11 @@
 mod addr;
 mod utils;
 
+use core::str;
 use sha2::{Digest, Sha256};
 use std::{
     borrow::Cow,
-    fs,
+    fs::{self, File},
     io::{self, BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     path::{Path, PathBuf},
@@ -14,6 +15,62 @@ use std::{
 pub use addr::{get_receiver_addr, get_sender_addr};
 pub use utils::sha256;
 
+#[allow(unused)]
+pub enum SendKind<'a> {
+    Msg(Cow<'a, str>),
+    FilesInfo(Vec<(Cow<'a, Path>, usize)>),
+    File { name: Cow<'a, Path>, file: File },
+}
+
+impl<'a, T: AsRef<str>> From<&'a T> for SendKind<'a> {
+    fn from(value: &'a T) -> Self {
+        Self::Msg(Cow::Borrowed(value.as_ref()))
+    }
+}
+
+impl From<String> for SendKind<'_> {
+    fn from(value: String) -> Self {
+        Self::Msg(Cow::Owned(value))
+    }
+}
+
+impl<'a, T: AsRef<Path>> From<(&'a T, File)> for SendKind<'a> {
+    fn from((name, file): (&'a T, File)) -> Self {
+        Self::File {
+            name: name.as_ref().into(),
+            file,
+        }
+    }
+}
+
+impl From<(PathBuf, File)> for SendKind<'_> {
+    fn from((name, file): (PathBuf, File)) -> Self {
+        Self::File {
+            name: name.into(),
+            file,
+        }
+    }
+}
+
+#[allow(unused)]
+pub enum ReceiveKind {}
+
+pub trait SenderFs {
+    fn send(&mut self, value: SendKind) -> io::Result<()>;
+    fn receive(&mut self, value: ReceiveKind) -> io::Result<()>;
+}
+
+impl SenderFs for TcpStream {
+    fn send(&mut self, value: SendKind) -> io::Result<()> {
+        self.write_all(b"ggg")?;
+        todo!()
+    }
+    fn receive(&mut self, value: ReceiveKind) -> io::Result<()> {
+        todo!()
+    }
+}
+
+/*
 #[allow(unused)]
 #[derive(Debug, Default)]
 pub struct SenderFs {
@@ -357,4 +414,4 @@ pub enum ReceiverOps<'a> {
     UserInfo { user: Option<Cow<'a, str>> },
     File { name: Cow<'a, Path>, size: usize },
     Msg(Cow<'a, str>),
-}
+}*/

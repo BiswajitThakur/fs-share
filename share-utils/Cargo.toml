@@ -4,5 +4,6 @@ version = "0.1.0"
 edition.workspace = true
 
 [dependencies]
-sha2 = "0.10"
+dirs = "5.0.1"
 indicatif = "0.17.9"
+sha2 = "0.10"

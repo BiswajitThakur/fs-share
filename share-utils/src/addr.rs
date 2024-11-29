@@ -62,7 +62,7 @@ pub fn get_sender_addr<T: AsRef<[u8]>>(
                     return Ok(Some(addr));
                 }
             }
-            Ok((size, addr)) if size == 42 => {
+            Ok((42, addr)) => {
                 if buf[..10] == *b":fs-share:" && buf[10..] == hash_of_hash {
                     socket.send_to(hash.as_slice(), addr)?;
                 }

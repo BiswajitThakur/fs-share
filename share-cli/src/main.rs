@@ -1,6 +1,6 @@
 use cli::run;
 
 mod cli;
-fn main() {
-    run();
+fn main() -> std::io::Result<()> {
+    run()
 }

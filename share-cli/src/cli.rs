@@ -1,5 +1,5 @@
 use std::{
-    io::{BufRead, BufReader, BufWriter, Write},
+    io,
     net::{SocketAddr, TcpListener, TcpStream, UdpSocket},
     path::PathBuf,
     thread,
@@ -42,8 +42,9 @@ enum Mode {
     Receive,
 }
 
-pub fn run() {
+pub fn run() -> io::Result<()> {
     let args = Cli::parse();
+    let mut stdout = std::io::stdout();
     match args.mode {
         Mode::Send => {
             let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -53,28 +54,18 @@ pub fn run() {
             let stream = TcpStream::connect(receiver);
             if stream.is_err() {
                 eprintln!(".....Faild to Connect.....");
-                return;
+                return Ok(());
             } else {
                 println!(".....Connect Success.....");
             }
             let mut stream = stream.unwrap();
-            /*
-            if args.args.is_empty() {
-                stream.send_empty().unwrap();
-            }*/
-            //let mut wrt = BufWriter::new(stream);
-            for line in std::io::stdin().lines() {
-                match line {
-                    Ok(input) => {
-                        stream.send_msg(input).unwrap();
-                        //wrt.write_all(input.as_bytes()).unwrap();
-                        stream.write_all(b"\n").unwrap();
-                        //wrt.flush().unwrap();
-                    }
-                    Err(e) => {
-                        eprintln!("Error reading input: {}", e);
-                        break;
-                    }
+            for file in args.args {
+                stream.send_file(file, &mut stdout)?;
+            }
+            stream.send_eof()?;
+            loop {
+                if !stream.receive(&mut stdout).unwrap() {
+                    break;
                 }
             }
         }
@@ -87,25 +78,23 @@ pub fn run() {
             let stream = get_sender_stream(listener, sender);
             if stream.is_none() {
                 eprintln!(".....Faild to Connect.....");
-                return;
+                return Ok(());
             } else {
                 println!(".....Connect Success.....");
             }
             let mut stream = stream.unwrap();
             loop {
-                if !stream.receive().unwrap() {
+                if !stream.receive(&mut stdout).unwrap() {
                     break;
                 }
             }
-            //stream.send("This is massege".to_owned().into()).unwrap();
-            /*
-            let rdr = BufReader::new(stream);
-            let mut stdout = std::io::stderr();
-            for line in rdr.lines() {
-                writeln!(stdout, "{}", line.unwrap()).unwrap();
-            }*/
+            for file in args.args {
+                stream.send_file(file, &mut stdout)?;
+            }
+            stream.send_eof()?;
         }
     }
+    Ok(())
 }
 
 #[inline]

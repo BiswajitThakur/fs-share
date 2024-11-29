@@ -1,0 +1,9 @@
+[package]
+name = "fs-share"
+version = "0.1.0-dev"
+edition.workspace = true
+
+[dependencies]
+share-utils = { path = "../fs-share-utils" }
+
+clap = { version = "4.5.15", features = ["derive"] }

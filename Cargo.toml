@@ -1,5 +1,5 @@
 [workspace]
-members = ["share-utils", "share-cli"]
+members = ["fs-share-utils", "fs-share"]
 resolver = "2"
 
 [workspace.package]

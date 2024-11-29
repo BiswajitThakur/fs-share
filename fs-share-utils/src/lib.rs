@@ -8,6 +8,7 @@ use std::fmt::Write as FWrite;
 use std::fs;
 use std::io::{BufWriter, Cursor};
 use std::path::PathBuf;
+use std::str::FromStr;
 use std::{
     fs::File,
     io::{self, BufReader, Read, Write},
@@ -110,7 +111,10 @@ impl ShareFs for TcpStream {
                 let mut name: Vec<u8> = Vec::with_capacity(name_length);
                 transfer_without_progress(self, &mut name, name_length)?;
                 let name = std::str::from_utf8(&name).unwrap_or_default();
-                let mut file_writer = create_new_file(name)?;
+                // let mut file_writer = create_new_file(name)?; //
+                let f_n = PathBuf::from_str(name).unwrap();
+                let f = fs::File::create_new(f_n.file_name().unwrap())?;
+                let mut file_writer = BufWriter::new(f);
                 writeln!(
                     stdout,
                     "File Receiving: {}, Size: {} bytes",
@@ -194,7 +198,7 @@ fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
     }
     Ok(num)
 }
-
+/*
 fn create_new_file<T: AsRef<Path>>(name: T) -> io::Result<BufWriter<fs::File>> {
     #[cfg(target_os = "android")]
     let download_dir = PathBuf::from("/sdcard/Download");
@@ -202,10 +206,12 @@ fn create_new_file<T: AsRef<Path>>(name: T) -> io::Result<BufWriter<fs::File>> {
     let download_dir = dirs::download_dir().unwrap();
 
     let file_name = download_dir.join(name);
+    dbg!(&file_name);
     let path = ensure_unique_file(file_name);
     let file = fs::File::create_new(path)?;
     Ok(io::BufWriter::new(file))
 }
+
 
 fn ensure_unique_file<P: AsRef<Path>>(path: P) -> PathBuf {
     let original_path = path.as_ref();
@@ -234,7 +240,7 @@ fn ensure_unique_file<P: AsRef<Path>>(path: P) -> PathBuf {
 
     unique_path
 }
-
+*/
 #[cfg(test)]
 mod tests {
     use std::io::{self, sink, Cursor, Read};

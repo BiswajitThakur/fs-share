@@ -125,7 +125,7 @@ fn read_n_bytes<R: io::Read, W: io::Write>(r: &mut R, w: &mut W, n: usize) -> io
         i += read_count as u64;
         pb.set_position(i);
     }
-    pb.finish_and_clear();
+    pb.finish();
     Ok(())
 }
 
@@ -146,4 +146,164 @@ fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
         num = num * 10 + (buffer[0] - b'0') as usize;
     }
     Ok(num)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, sink, Cursor, Read};
+
+    use crate::{read_n_bytes, read_num};
+
+    #[test]
+    fn test_read_num_valid() {
+        let data = b"123045:abc";
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor).unwrap();
+        assert_eq!(result, 123045);
+    }
+    #[test]
+    fn test_read_num_empty() {
+        let data = b"";
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor).unwrap();
+        assert_eq!(result, 0);
+    }
+    #[test]
+    fn test_read_num_with_leading_zeros() {
+        let data = b"000000000000000000000000000000123";
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor).unwrap();
+        assert_eq!(result, 123);
+    }
+    #[test]
+    fn test_read_num_very_large_number() {
+        let data = format!("00000000{}::::::", usize::MAX);
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor).unwrap();
+        assert_eq!(result, usize::MAX);
+    }
+    #[test]
+    fn test_read_num_too_large_number() {
+        let data = b"9999999999999999999999999999999999";
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor);
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::InvalidData);
+    }
+    #[test]
+    fn test_read_num() {
+        let data = b"0000100xyz43210?1*";
+        let mut cursor = Cursor::new(data);
+        let result = read_num(&mut cursor).unwrap(); // x
+        assert_eq!(result, 100);
+        let result = read_num(&mut cursor).unwrap(); // y
+        assert_eq!(result, 0);
+        let result = read_num(&mut cursor).unwrap(); // z
+        assert_eq!(result, 0);
+        let result = read_num(&mut cursor).unwrap(); // ?
+        assert_eq!(result, 43210);
+        let result = read_num(&mut cursor).unwrap(); // *
+        assert_eq!(result, 1);
+    }
+
+    #[test]
+    fn test_read_n_bytes_exact() {
+        let data = b"1234567890";
+        let mut reader = Cursor::new(data);
+        let mut writer = Vec::new();
+
+        // Read exactly 10 bytes
+        read_n_bytes(&mut reader, &mut writer, 10).unwrap();
+        assert_eq!(writer, data);
+    }
+    #[test]
+    fn test_read_n_bytes_partial() {
+        let data = b"1234567890";
+        let mut reader = Cursor::new(data);
+        let mut writer = Vec::new();
+
+        // Read only 5 bytes out of the 10 available
+        read_n_bytes(&mut reader, &mut writer, 5).unwrap();
+        assert_eq!(writer, b"12345");
+    }
+    #[test]
+    fn test_read_n_bytes_large_n() {
+        let data = b"1234567890";
+        let mut reader = Cursor::new(data);
+        let mut writer = Vec::new();
+
+        // Attempt to read more bytes than available
+        read_n_bytes(&mut reader, &mut writer, 20).unwrap();
+        assert_eq!(writer, data); // Writer should contain all available bytes
+    }
+    #[test]
+    fn test_read_n_bytes_empty_input() {
+        let data = b"";
+        let mut reader = Cursor::new(data);
+        let mut writer = Vec::new();
+
+        // Reading from an empty source should not fail
+        read_n_bytes(&mut reader, &mut writer, 10).unwrap();
+        assert!(writer.is_empty()); // Writer should remain empty
+    }
+    #[test]
+    fn test_read_n_bytes_zero_bytes() {
+        let data = b"1234567890";
+        let mut reader = Cursor::new(data);
+        let mut writer = Vec::new();
+
+        // Reading 0 bytes should result in no data written
+        read_n_bytes(&mut reader, &mut writer, 0).unwrap();
+        assert!(writer.is_empty());
+    }
+    #[test]
+    fn test_read_n_bytes_sink() {
+        let data = b"1234567890";
+        let mut reader = Cursor::new(data);
+        let mut writer = sink(); // /dev/null equivalent
+
+        // Reading into a sink; ensures no errors occur
+        read_n_bytes(&mut reader, &mut writer, 5).unwrap();
+        // Nothing to verify in the writer since it's a sink
+    }
+    #[test]
+    fn test_read_n_bytes_sink_large_data() {
+        use std::io::repeat;
+
+        // Simulate a source of infinite data (a stream of the byte `b'x'`)
+        let data = repeat(b'x'); // Infinite data
+        let mut reader = data.take(5 * 1024 * 1024 * 1024); // Limit to 5 GB
+        let mut writer = sink(); // Write to a sink (discarding data)
+
+        // Read 1.5 GB of data and write it to the sink
+        read_n_bytes(&mut reader, &mut writer, 3 * 1024 * 1024 * 1024 / 2).unwrap();
+
+        // Test completes if no error occurs during the read/write
+    }
+    #[test]
+    fn test_read_n_bytes() {
+        let data = String::from_iter((0..20).into_iter().map(|_| {
+            format!(
+                "{}{}{}",
+                String::from_iter('a'..='z'),
+                String::from_iter('A'..='Z'),
+                String::from_iter('0'..='9')
+            )
+        }));
+        let mut reader = Cursor::new(data); // length = ((2 * 26) + 10) * 20 == 1240
+        let mut writer = Vec::new();
+        read_n_bytes(&mut reader, &mut writer, 1).unwrap();
+        assert_eq!(writer, b"a");
+        let mut writer = Vec::new();
+        read_n_bytes(&mut reader, &mut writer, 15).unwrap();
+        assert_eq!(writer, b"bcdefghijklmnop");
+        read_n_bytes(&mut reader, &mut writer, 5).unwrap();
+        let mut writer = Vec::new();
+        read_n_bytes(&mut reader, &mut writer, 15).unwrap();
+        assert_eq!(writer, b"vwxyzABCDEFGHIJ");
+        read_n_bytes(&mut reader, &mut writer, (1240 - 36) - 20).unwrap();
+        let mut writer = Vec::new();
+        read_n_bytes(&mut reader, &mut writer, 20).unwrap();
+        assert_eq!(writer, b"QRSTUVWXYZ0123456789");
+    }
 }

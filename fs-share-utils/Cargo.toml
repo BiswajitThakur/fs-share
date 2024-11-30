@@ -3,6 +3,9 @@ name = "fs-share-utils"
 version = "0.1.0-dev"
 license-file = "LICENSE"
 edition.workspace = true
+description = "A utility library for file sharing."
+repository = "https://github.com/BiswajitThakur/fs-share.git"
+homepage = "https://github.com/BiswajitThakur/fs-share.git"
 
 [dependencies]
 dirs = "5.0.1"

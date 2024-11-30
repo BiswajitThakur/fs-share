@@ -1,5 +1,5 @@
 [package]
-name = "share-utils"
+name = "fs-share-utils"
 version = "0.1.0-dev"
 edition.workspace = true
 

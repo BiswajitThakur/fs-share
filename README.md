@@ -14,6 +14,12 @@ A cross-platform file-sharing CLI application written in Rust. It enables effici
 
 ## Installation
 
+```
+cargo install fs-share
+```
+
+or
+
 ```bash
 git clone https://github.com/BiswajitThakur/fs-share.git
 cd fs-share/

@@ -195,7 +195,7 @@ checksum = "a357d28ed41a50f9c765dbfe56cbc04a64e53e5fc58ba79fbc34c10ef3df831f"
 
 [[package]]
 name = "fs-share"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "clap",
  "fs-share-utils",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "fs-share-utils"
-version = "0.1.0-dev"
+version = "0.1.0"
 dependencies = [
  "dirs",
  "indicatif",

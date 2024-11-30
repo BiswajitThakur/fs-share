@@ -1,9 +1,10 @@
 [package]
 name = "fs-share"
-version = "0.1.0"
+version = "0.1.1"
 license-file = "LICENSE"
 edition.workspace = true
 description = "A cross-platform file-sharing CLI application written in Rust. It enables efficient file transfers between devices using TCP and UDP protocols, with real-time progress tracking for each transfer."
+keywords = ["file", "share", "tcu", "udp", "cli"]
 repository = "https://github.com/BiswajitThakur/fs-share.git"
 homepage = "https://github.com/BiswajitThakur/fs-share.git"
 

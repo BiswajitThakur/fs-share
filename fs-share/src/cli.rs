@@ -22,13 +22,13 @@ struct Cli {
     /// password
     #[arg(long, default_value_t = String::from("password"))]
     password: String,
-    #[arg(long, default_value_t = 34254)]
 
     /// port
+    #[arg(long, default_value_t = 34254)]
     port: u16,
-    #[arg(long, default_value_t = 60)]
 
     /// Timeout
+    #[arg(long, default_value_t = 60)]
     timeout: u64,
 
     /// Args

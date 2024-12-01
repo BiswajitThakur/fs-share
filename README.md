@@ -1,5 +1,8 @@
 # FS-Share
 
+[![Crates.io](https://img.shields.io/crates/v/fs-share.svg)](https://crates.io/crates/fs-share)
+[![downloads](https://img.shields.io/crates/d/fs-share.svg)](https://crates.io/crates/fs-share)
+
 A cross-platform file-sharing CLI application written in Rust. It enables efficient file transfers between devices using TCP and UDP protocols, with real-time progress tracking for each transfer.
 
 # Under Development

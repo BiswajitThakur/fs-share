@@ -1,6 +1,6 @@
 [package]
 name = "fs-share"
-version = "0.1.1"
+version = "0.1.2"
 license-file = "LICENSE"
 edition.workspace = true
 description = "A cross-platform file-sharing CLI application"

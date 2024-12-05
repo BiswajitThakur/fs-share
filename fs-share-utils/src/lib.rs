@@ -11,25 +11,21 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::{
     fs::File,
-    io::{self, BufReader, Read, Write},
+    io::{self, BufReader, Write},
     net::TcpStream,
     path::Path,
 };
+
+pub use colored::*;
+
 pub use utils::sha256;
 
-pub trait ShareFs {
-    fn send_eof(&mut self) -> io::Result<()>;
-    fn receive<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<bool>;
-    fn send_msg<T: AsRef<str>>(&mut self, value: T) -> io::Result<()>;
-    fn send_info<T: AsRef<str>>(&mut self, name: T) -> io::Result<()>;
-    fn send_file<P: AsRef<Path>, W: io::Write>(
-        &mut self,
-        file: P,
-        stdout: &mut W,
-    ) -> io::Result<()>;
-}
+const SEND_BUFFER_SIZE: usize = 32 * 1024;
+const RECEIVE_BUFFER_SIZE: usize = 32 * 1024;
 
-impl ShareFs for TcpStream {
+impl ShareFs for TcpStream {}
+
+pub trait ShareFs: Sized + io::Write + io::Read {
     fn send_eof(&mut self) -> io::Result<()> {
         write!(self, ":00:")
     }
@@ -37,9 +33,9 @@ impl ShareFs for TcpStream {
         let msg = value.as_ref();
         write!(self, "msg:{}:", msg.as_bytes().len())?;
         let mut cursor = Cursor::new(msg);
-        transfer_with_progress(&mut cursor, self, msg.len())?;
+        transfer_with_progress(&mut cursor, self, msg.len(), SEND_BUFFER_SIZE)?;
         let mut v = Vec::with_capacity(4);
-        transfer_without_progress(self, &mut v, 4)?;
+        transfer_without_progress(self, &mut v, 4, 4)?;
         let prefix = std::str::from_utf8(&v).unwrap_or_default();
         match prefix {
             ":ss:" => {}
@@ -49,6 +45,42 @@ impl ShareFs for TcpStream {
             }
         }
         Ok(())
+    }
+    fn receive<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<bool> {
+        let mut v: Vec<u8> = Vec::with_capacity(4);
+        transfer_without_progress(self, &mut v, 4, 4)?;
+        let prefix = std::str::from_utf8(&v).unwrap_or_default();
+        match prefix {
+            ":00:" => Ok(false),
+            "msg:" => {
+                let len = read_num(self)?;
+                transfer_with_progress(self, stdout, len, RECEIVE_BUFFER_SIZE)?;
+                stdout.write_all(b"\n")?;
+                self.write_all(b":ss:")?;
+                Ok(true)
+            }
+            "fff:" => {
+                let name_length = read_num(self)?;
+                let file_length = read_num(self)?;
+                let mut name: Vec<u8> = Vec::with_capacity(name_length);
+                transfer_without_progress(self, &mut name, name_length, 1024)?;
+                let name = std::str::from_utf8(&name).unwrap_or_default();
+                // let mut file_writer = create_new_file(name)?; //
+                let f_n = PathBuf::from_str(name).unwrap();
+                let f = fs::File::create_new(f_n.file_name().unwrap())?;
+                let mut file_writer = BufWriter::new(f);
+                writeln!(
+                    stdout,
+                    "File Receiving: {}, Size: {} bytes",
+                    name, file_length
+                )?;
+                transfer_with_progress(self, &mut file_writer, file_length, RECEIVE_BUFFER_SIZE)?;
+                file_writer.flush()?;
+                self.write_all(b":ss:")?;
+                Ok(true)
+            }
+            _ => unreachable!(),
+        }
     }
     fn send_info<T: AsRef<str>>(&mut self, _name: T) -> io::Result<()> {
         todo!()
@@ -79,64 +111,29 @@ impl ShareFs for TcpStream {
             f_name
         )?;
         let mut reader = BufReader::new(f);
-        transfer_with_progress(&mut reader, self, file_len as usize)?;
+        transfer_with_progress(&mut reader, self, file_len as usize, SEND_BUFFER_SIZE)?;
         let mut buffer: Vec<u8> = vec![0; 4];
         self.read_exact(&mut buffer[0..4])?;
         let prefix = std::str::from_utf8(&buffer[0..4]).unwrap_or_default();
         match prefix {
             ":ss:" => {}
             _ => {
-                writeln!(stdout, ".....Falid to Send.....")?;
+                writeln!(stdout, "{}", ".....Falid to Send.....".bold().red())?;
                 std::process::exit(1);
             }
         }
         Ok(())
     }
-    fn receive<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<bool> {
-        let mut v: Vec<u8> = Vec::with_capacity(4);
-        transfer_without_progress(self, &mut v, 4)?;
-        let prefix = std::str::from_utf8(&v).unwrap_or_default();
-        match prefix {
-            ":00:" => Ok(false),
-            "msg:" => {
-                let len = read_num(self)?;
-                transfer_with_progress(self, stdout, len)?;
-                stdout.write_all(b"\n")?;
-                self.write_all(b":ss:")?;
-                Ok(true)
-            }
-            "fff:" => {
-                let name_length = read_num(self)?;
-                let file_length = read_num(self)?;
-                let mut name: Vec<u8> = Vec::with_capacity(name_length);
-                transfer_without_progress(self, &mut name, name_length)?;
-                let name = std::str::from_utf8(&name).unwrap_or_default();
-                // let mut file_writer = create_new_file(name)?; //
-                let f_n = PathBuf::from_str(name).unwrap();
-                let f = fs::File::create_new(f_n.file_name().unwrap())?;
-                let mut file_writer = BufWriter::new(f);
-                writeln!(
-                    stdout,
-                    "File Receiving: {}, Size: {} bytes",
-                    name, file_length
-                )?;
-                transfer_with_progress(self, &mut file_writer, file_length)?;
-                file_writer.flush()?;
-                self.write_all(b":ss:")?;
-                Ok(true)
-            }
-            _ => unreachable!(),
-        }
-    }
 }
 
-fn transfer_without_progress<R: io::Read, W: io::Write>(
+pub fn transfer_without_progress<R: io::Read, W: io::Write>(
     r: &mut R,
     w: &mut W,
     n: usize,
+    buf_size: usize,
 ) -> io::Result<()> {
     let mut remain = n;
-    let mut buffer = vec![0; std::cmp::min(n, 1024 * 32)];
+    let mut buffer = vec![0; std::cmp::min(n, buf_size)];
 
     while remain > 0 {
         let to_read = std::cmp::min(buffer.len(), remain);
@@ -149,13 +146,15 @@ fn transfer_without_progress<R: io::Read, W: io::Write>(
     }
     Ok(())
 }
+
 fn transfer_with_progress<R: io::Read, W: io::Write>(
     r: &mut R,
     w: &mut W,
     n: usize,
+    buf_size: usize,
 ) -> io::Result<()> {
     let mut remain = n;
-    let mut buffer = vec![0; std::cmp::min(n, 1024 * 32)];
+    let mut buffer = vec![0; std::cmp::min(n, buf_size)];
 
     let mut i = 0;
     let pb = ProgressBar::new(n as u64);
@@ -180,7 +179,7 @@ fn transfer_with_progress<R: io::Read, W: io::Write>(
     Ok(())
 }
 
-fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
+pub fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
     let mut buffer = [0; 1];
     let mut num = 0;
     loop {
@@ -245,7 +244,8 @@ fn ensure_unique_file<P: AsRef<Path>>(path: P) -> PathBuf {
 mod tests {
     use std::io::{self, sink, Cursor, Read};
 
-    use crate::{read_num, transfer_with_progress};
+    use crate::{read_num, transfer_with_progress, transfer_without_progress};
+    const BUFFER_SIZE: usize = 1024;
 
     #[test]
     fn test_read_num_valid() {
@@ -306,7 +306,7 @@ mod tests {
         let mut writer = Vec::new();
 
         // Read exactly 10 bytes
-        transfer_with_progress(&mut reader, &mut writer, 10).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 10, BUFFER_SIZE).unwrap();
         assert_eq!(writer, data);
     }
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         let mut writer = Vec::new();
 
         // Read only 5 bytes out of the 10 available
-        transfer_with_progress(&mut reader, &mut writer, 5).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 5, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"12345");
     }
     #[test]
@@ -326,7 +326,7 @@ mod tests {
         let mut writer = Vec::new();
 
         // Attempt to read more bytes than available
-        transfer_with_progress(&mut reader, &mut writer, 20).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 20, BUFFER_SIZE).unwrap();
         assert_eq!(writer, data); // Writer should contain all available bytes
     }
     #[test]
@@ -336,7 +336,7 @@ mod tests {
         let mut writer = Vec::new();
 
         // Reading from an empty source should not fail
-        transfer_with_progress(&mut reader, &mut writer, 10).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 10, BUFFER_SIZE).unwrap();
         assert!(writer.is_empty()); // Writer should remain empty
     }
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         let mut writer = Vec::new();
 
         // Reading 0 bytes should result in no data written
-        transfer_with_progress(&mut reader, &mut writer, 0).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 0, BUFFER_SIZE).unwrap();
         assert!(writer.is_empty());
     }
     #[test]
@@ -356,7 +356,7 @@ mod tests {
         let mut writer = sink(); // /dev/null equivalent
 
         // Reading into a sink; ensures no errors occur
-        transfer_with_progress(&mut reader, &mut writer, 5).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 5, BUFFER_SIZE).unwrap();
         // Nothing to verify in the writer since it's a sink
     }
     #[test]
@@ -369,7 +369,13 @@ mod tests {
         let mut writer = sink(); // Write to a sink (discarding data)
 
         // Read 1.5 GB of data and write it to the sink
-        transfer_with_progress(&mut reader, &mut writer, 3 * 1024 * 1024 * 1024 / 2).unwrap();
+        transfer_with_progress(
+            &mut reader,
+            &mut writer,
+            3 * 1024 * 1024 * 1024 / 2,
+            BUFFER_SIZE,
+        )
+        .unwrap();
 
         // Test completes if no error occurs during the read/write
     }
@@ -385,18 +391,18 @@ mod tests {
         }));
         let mut reader = Cursor::new(data); // length = ((2 * 26) + 10) * 20 == 1240
         let mut writer = Vec::new();
-        transfer_with_progress(&mut reader, &mut writer, 1).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 1, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"a");
         let mut writer = Vec::new();
-        transfer_with_progress(&mut reader, &mut writer, 15).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 15, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"bcdefghijklmnop");
-        transfer_with_progress(&mut reader, &mut writer, 5).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 5, BUFFER_SIZE).unwrap();
         let mut writer = Vec::new();
-        transfer_with_progress(&mut reader, &mut writer, 15).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, 15, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"vwxyzABCDEFGHIJ");
-        transfer_with_progress(&mut reader, &mut writer, (1240 - 36) - 20).unwrap();
+        transfer_without_progress(&mut reader, &mut writer, (1240 - 36) - 20, BUFFER_SIZE).unwrap();
         let mut writer = Vec::new();
-        transfer_with_progress(&mut reader, &mut writer, 20).unwrap();
+        transfer_with_progress(&mut reader, &mut writer, 20, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"QRSTUVWXYZ0123456789");
     }
 }

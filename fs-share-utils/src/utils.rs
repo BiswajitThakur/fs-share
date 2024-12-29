@@ -36,7 +36,7 @@ pub fn create_file_path<T: AsRef<str>>(value: T) -> PathBuf {
     let mut i: u32 = 1;
     loop {
         let mut new_name = OsString::from(name);
-        new_name.push(format!("_{}", i));
+        new_name.push(format!("_{}.", i));
         new_name.push(ext);
         let new_path = dir.join(new_name);
         if !new_path.is_file() {

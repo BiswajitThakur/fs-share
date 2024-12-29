@@ -15,15 +15,11 @@ struct Cli {
     #[arg(value_enum)]
     mode: Mode,
 
-    /// Name
-    #[arg(long, default_value_t = String::from("Unknown"))]
-    name: String,
-
-    /// password
+    /// Password
     #[arg(long, default_value_t = String::from("password"))]
     password: String,
 
-    /// port
+    /// Port
     #[arg(long, default_value_t = 34254)]
     port: u16,
 
@@ -31,10 +27,7 @@ struct Cli {
     #[arg(long, default_value_t = 60)]
     timeout: u64,
 
-    // /// Outpit dir
-    // #[arg(long)]
-    // out: PathBuf,
-    /// Args
+    /// Files
     #[arg()]
     args: Vec<PathBuf>,
 }
@@ -56,7 +49,7 @@ pub fn run() -> io::Result<()> {
             thread::sleep(Duration::from_secs(2));
             let stream = TcpStream::connect(receiver);
             if stream.is_err() {
-                eprintln!("{}", ".....Faild to Connect.....".bold().green());
+                eprintln!("{}", ".....Faild to Connect.....".bold().red());
                 return Ok(());
             } else {
                 println!("{}", ".....Connect Success.....".bold().green());

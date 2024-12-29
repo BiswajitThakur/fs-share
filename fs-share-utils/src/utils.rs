@@ -1,4 +1,50 @@
+use std::{
+    ffi::{OsStr, OsString},
+    path::{Path, PathBuf},
+};
+
 use sha2::{Digest, Sha256};
+
+#[inline]
+fn download_dir() -> Option<PathBuf> {
+    #[cfg(not(target_os = "android"))]
+    return dirs::download_dir();
+    #[cfg(target_os = "android")]
+    {
+        let dir1 = PathBuf::from("/storage/emulated/0/Download");
+        if dir1.is_dir() {
+            return Some(dir1);
+        };
+        let dir2 = PathBuf::from("/sdcard/Download");
+        if dir2.is_dir() {
+            Some(dir2)
+        } else {
+            None
+        }
+    }
+}
+
+pub fn create_file_path<T: AsRef<str>>(value: T) -> PathBuf {
+    let download = download_dir().unwrap_or(PathBuf::from("."));
+    let file_path = PathBuf::from_iter([download, PathBuf::from(value.as_ref())].iter());
+    if !file_path.is_file() {
+        return file_path;
+    }
+    let dir = file_path.parent().unwrap_or(Path::new("."));
+    let ext = file_path.extension().unwrap_or_default();
+    let name = file_path.file_stem().unwrap_or(OsStr::new("unknown"));
+    let mut i: u32 = 1;
+    loop {
+        let mut new_name = OsString::from(name);
+        new_name.push(format!("_{}", i));
+        new_name.push(ext);
+        let new_path = dir.join(new_name);
+        if !new_path.is_file() {
+            return new_path;
+        }
+        i += 1;
+    }
+}
 
 pub fn sha256<T: AsRef<[u8]>>(value: T) -> Vec<u8> {
     let mut hasher = Sha256::new();

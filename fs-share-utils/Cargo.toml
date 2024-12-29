@@ -1,6 +1,6 @@
 [package]
 name = "fs-share-utils"
-version = "0.1.1"
+version = "0.1.2"
 license-file = "LICENSE"
 edition.workspace = true
 description = "A utility library for file sharing."
@@ -9,7 +9,9 @@ homepage = "https://github.com/BiswajitThakur/fs-share.git"
 
 [dependencies]
 colored = "2"
-dirs = "5.0.1"
 indicatif = "0.17.9"
 sha2 = "0.10"
+
+[target.'cfg(not(target_os = "android"))'.dependencies]
+dirs = "5.0.1"
 

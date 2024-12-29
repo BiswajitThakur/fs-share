@@ -5,16 +5,15 @@ use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::{get_receiver_addr, get_sender_addr};
 use std::fmt::Write as FWrite;
-use std::fs;
 use std::io::{BufWriter, Cursor};
-use std::path::PathBuf;
-use std::str::FromStr;
+use std::{cmp, fs};
 use std::{
     fs::File,
     io::{self, BufReader, Write},
     net::TcpStream,
     path::Path,
 };
+use utils::create_file_path;
 
 pub use colored::*;
 
@@ -33,7 +32,7 @@ pub trait ShareFs: Sized + io::Write + io::Read {
         let msg = value.as_ref();
         write!(self, "msg:{}:", msg.as_bytes().len())?;
         let mut cursor = Cursor::new(msg);
-        transfer_with_progress(&mut cursor, self, msg.len(), SEND_BUFFER_SIZE)?;
+        transfer_without_progress(&mut cursor, self, msg.len(), SEND_BUFFER_SIZE)?;
         let mut v = Vec::with_capacity(4);
         transfer_without_progress(self, &mut v, 4, 4)?;
         let prefix = std::str::from_utf8(&v).unwrap_or_default();
@@ -46,44 +45,59 @@ pub trait ShareFs: Sized + io::Write + io::Read {
         }
         Ok(())
     }
-    fn receive<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<bool> {
+    fn receive_msg<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<()> {
+        let len = read_num(self)?;
+        transfer_without_progress(self, stdout, len, RECEIVE_BUFFER_SIZE)?;
+        stdout.write_all(b"\n")?;
+        self.write_all(b":ss:")?;
+        Ok(())
+    }
+    fn receive_file_with_progress<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<()> {
+        let name_length = read_num(self)?;
+        let file_length = read_num(self)?;
+        let mut name: Vec<u8> = Vec::with_capacity(name_length);
+        transfer_without_progress(self, &mut name, name_length, cmp::min(name_length, 255))?;
+        let name = std::str::from_utf8(&name).unwrap_or("unknown");
+        let file_path = create_file_path(name);
+        let file = fs::File::create_new(file_path)?;
+        let mut file_writer = BufWriter::new(file);
+        writeln!(
+            stdout,
+            "File Receiving: {}, Size: {} bytes",
+            name.yellow().bold(),
+            file_length.to_string().green().bold()
+        )?;
+        transfer_with_progress(self, &mut file_writer, file_length, RECEIVE_BUFFER_SIZE)?;
+        file_writer.flush()?;
+        self.write_all(b":ss:")?;
+        Ok(())
+    }
+    fn get_prefix(&mut self) -> io::Result<String> {
         let mut v: Vec<u8> = Vec::with_capacity(4);
         transfer_without_progress(self, &mut v, 4, 4)?;
-        let prefix = std::str::from_utf8(&v).unwrap_or_default();
-        match prefix {
+        let prefix = String::from_utf8(v).unwrap_or_default();
+        Ok(prefix)
+    }
+    fn receive<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<bool> {
+        match self.get_prefix()?.as_str() {
             ":00:" => Ok(false),
             "msg:" => {
-                let len = read_num(self)?;
-                transfer_with_progress(self, stdout, len, RECEIVE_BUFFER_SIZE)?;
-                stdout.write_all(b"\n")?;
-                self.write_all(b":ss:")?;
+                self.receive_msg(stdout)?;
                 Ok(true)
             }
             "fff:" => {
-                let name_length = read_num(self)?;
-                let file_length = read_num(self)?;
-                let mut name: Vec<u8> = Vec::with_capacity(name_length);
-                transfer_without_progress(self, &mut name, name_length, 1024)?;
-                let name = std::str::from_utf8(&name).unwrap_or_default();
-                // let mut file_writer = create_new_file(name)?; //
-                let f_n = PathBuf::from_str(name).unwrap();
-                let f = fs::File::create_new(f_n.file_name().unwrap())?;
-                let mut file_writer = BufWriter::new(f);
-                writeln!(
-                    stdout,
-                    "File Receiving: {}, Size: {} bytes",
-                    name, file_length
-                )?;
-                transfer_with_progress(self, &mut file_writer, file_length, RECEIVE_BUFFER_SIZE)?;
-                file_writer.flush()?;
-                self.write_all(b":ss:")?;
+                self.receive_file_with_progress(stdout)?;
                 Ok(true)
             }
-            _ => unreachable!(),
+            p => {
+                eprintln!(
+                    "{}: unknown prefix: {}",
+                    "ERROR".red().bold(),
+                    p.red().bold()
+                );
+                std::process::exit(1);
+            }
         }
-    }
-    fn send_info<T: AsRef<str>>(&mut self, _name: T) -> io::Result<()> {
-        todo!()
     }
     fn send_file<P: AsRef<Path>, W: io::Write>(
         &mut self,
@@ -197,49 +211,6 @@ pub fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
     }
     Ok(num)
 }
-/*
-fn create_new_file<T: AsRef<Path>>(name: T) -> io::Result<BufWriter<fs::File>> {
-    #[cfg(target_os = "android")]
-    let download_dir = PathBuf::from("/sdcard/Download");
-    #[cfg(not(target_os = "android"))]
-    let download_dir = dirs::download_dir().unwrap();
-
-    let file_name = download_dir.join(name);
-    dbg!(&file_name);
-    let path = ensure_unique_file(file_name);
-    let file = fs::File::create_new(path)?;
-    Ok(io::BufWriter::new(file))
-}
-
-
-fn ensure_unique_file<P: AsRef<Path>>(path: P) -> PathBuf {
-    let original_path = path.as_ref();
-    if !original_path.exists() {
-        return original_path.to_path_buf();
-    }
-
-    let mut count = 1;
-    let mut unique_path = original_path.to_path_buf();
-
-    while unique_path.exists() {
-        unique_path = original_path.with_file_name(format!(
-            "{}_{}{}",
-            original_path
-                .file_stem()
-                .unwrap_or_default()
-                .to_string_lossy(),
-            count,
-            original_path
-                .extension()
-                .map(|ext| format!(".{}", ext.to_string_lossy()))
-                .unwrap_or_default()
-        ));
-        count += 1;
-    }
-
-    unique_path
-}
-*/
 #[cfg(test)]
 mod tests {
     use std::io::{self, sink, Cursor, Read};

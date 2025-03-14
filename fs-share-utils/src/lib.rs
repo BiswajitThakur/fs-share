@@ -1,12 +1,18 @@
 mod addr;
+mod client;
 mod utils;
 
+use argon2::Argon2;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::{get_receiver_addr, get_sender_addr};
 use std::fmt::Write as FWrite;
-use std::io::{BufWriter, Cursor};
-use std::{cmp, fs};
+use std::io::{BufRead, BufWriter, Cursor};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread::Thread;
+use std::time::{self, Duration};
+use std::{cmp, fs, thread};
 use std::{
     fs::File,
     io::{self, BufReader, Write},
@@ -211,6 +217,94 @@ pub fn read_num<R: io::Read>(r: &mut R) -> io::Result<usize> {
     }
     Ok(num)
 }
+
+pub enum Status {
+    Success,
+    VersionNotMatch,
+}
+
+impl TryFrom<&[u8; 1]> for Status {
+    type Error = ();
+    fn try_from(value: &[u8; 1]) -> Result<Self, Self::Error> {
+        match &value {
+            [0] => Ok(Self::Success),
+            [1] => Ok(Self::VersionNotMatch),
+            _ => Err(()),
+        }
+    }
+}
+
+impl Status {
+    fn as_bytes(&self) -> &[u8; 1] {
+        match self {
+            Self::Success => &[0],
+            Self::VersionNotMatch => &[1],
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Header {
+    pub version: u16,
+    pub port: u16,
+    pub ipv6: Ipv6Addr, // 128 bit
+}
+
+impl Default for Header {
+    fn default() -> Self {
+        Self {
+            version: 0,
+            port: 0,
+            ipv6: Ipv6Addr::LOCALHOST,
+        }
+    }
+}
+
+impl From<&Header> for [u8; 20] {
+    // 16 + 16 + 128 = 160
+    // 160 / 8 = 20
+    fn from(value: &Header) -> Self {
+        let version = value.version.to_be_bytes();
+        let port = value.port.to_be_bytes();
+        let mut buffer = [0; 20];
+        buffer[0] = version[0];
+        buffer[1] = version[1];
+        buffer[2] = port[0];
+        buffer[3] = port[1];
+        let mut iter = value.ipv6.to_bits().to_be_bytes().into_iter();
+        for u in (&mut buffer[4..]).iter_mut() {
+            *u = iter.next().unwrap();
+        }
+        buffer
+    }
+}
+
+impl From<[u8; 20]> for Header {
+    fn from(v: [u8; 20]) -> Self {
+        let version = u16::from_be_bytes([v[0], v[1]]);
+        let port = u16::from_be_bytes([v[2], v[3]]);
+        let mut ip = [0; 16];
+        for (index, u) in (&v[4..]).iter().enumerate() {
+            ip[index] = *u;
+        }
+        let ipv6 = Ipv6Addr::from_bits(u128::from_be_bytes(ip));
+        Self {
+            version,
+            port,
+            ipv6,
+        }
+    }
+}
+
+impl Header {
+    #[inline(always)]
+    fn to_be_bytes(&self) -> [u8; 20] {
+        self.into()
+    }
+    fn to_addr(&self) -> SocketAddr {
+        SocketAddr::V6(SocketAddrV6::new(self.ipv6, self.port, 0, 1))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::io::{self, sink, Cursor, Read};
@@ -376,4 +470,108 @@ mod tests {
         transfer_with_progress(&mut reader, &mut writer, 20, BUFFER_SIZE).unwrap();
         assert_eq!(writer, b"QRSTUVWXYZ0123456789");
     }
+}
+
+fn ff() {
+    let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+}
+
+struct SenderFs<R> {
+    stream: R,
+}
+
+struct ReceiverFs<W> {
+    stream: W,
+}
+
+enum ClientType {
+    Sender,
+    Receiver(ReceiverAddr),
+}
+
+struct SenderAddr {}
+
+struct ReceiverAddr {
+    tcp_listener_addr: SocketAddr,
+    udp_socket_addr: SocketAddr,
+    broadcast_addr: SocketAddr,
+}
+
+impl ClientType {
+    fn argon2() -> Argon2<'static> {
+        Argon2::default()
+    }
+    fn connect(self) -> io::Result<TcpStream> {
+        match self {
+            Self::Sender => {}
+            Self::Receiver(addr) => {
+                let listener = TcpListener::bind(addr.tcp_listener_addr)?;
+                let listener_port = listener.local_addr()?.port();
+                let is_running = Arc::new(Mutex::new(true));
+                let is_running1 = is_running.clone();
+                thread::spawn(move || {
+                    send_info(
+                        listener_port,
+                        is_running1,
+                        addr.udp_socket_addr,
+                        addr.broadcast_addr,
+                    )
+                });
+                for stream in listener.incoming() {
+                    let send_file_stream = stream?;
+                    let receive_file_stream = send_file_stream.try_clone()?;
+                    match verify(receive_file_stream) {
+                        Ok(stream) => {
+                            close_upd_thread(is_running.clone());
+                            //let (cx, rx) = mpsc::channel();
+                            thread::spawn(|| send_file(BufWriter::new(send_file_stream)));
+                            thread::spawn(|| receive_file(stream));
+                        }
+                        Err(err) => eprintln!("{}", err),
+                    }
+                }
+            }
+        }
+        todo!()
+    }
+}
+
+fn verify<W: io::Read>(stream: W) -> io::Result<BufReader<W>> {
+    todo!()
+}
+
+fn send_file<W: io::Write>(send_stream: BufWriter<W>) -> io::Result<()> {
+    todo!()
+}
+
+fn receive_file<W: io::Read>(recv_stream: BufReader<W>) -> io::Result<()> {
+    todo!()
+}
+
+fn send_info(
+    port: u16,
+    is_running: Arc<Mutex<bool>>,
+    socket_addr: SocketAddr,
+    broadcast_addr: SocketAddr,
+) -> io::Result<()> {
+    let socket = UdpSocket::bind(socket_addr)?;
+    socket.set_broadcast(true)?;
+    socket.set_read_timeout(Some(Duration::from_secs(1)))?;
+    let port = port.to_be_bytes();
+    let mut data = [0u8; 13];
+    data[10] = port[0];
+    data[11] = port[1];
+    for (index, &b) in b":fs-share:".iter().enumerate() {
+        data[index] = b;
+    }
+    while *is_running.lock().unwrap() {
+        socket.send_to(&data, broadcast_addr)?;
+        thread::sleep(Duration::from_secs(1));
+    }
+    Ok(())
+}
+
+fn close_upd_thread(is_running: Arc<Mutex<bool>>) {
+    let mut is_running = is_running.lock().unwrap();
+    *is_running = false;
 }

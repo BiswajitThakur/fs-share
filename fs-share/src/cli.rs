@@ -7,7 +7,7 @@ use std::{
 };
 
 use clap::{Parser, ValueEnum};
-use share_utils::{get_receiver_addr, get_sender_addr, Colorize, ShareFs};
+use share_utils::{get_receiver_addr, get_sender_addr, Colorize, SenderFs, ShareFs};
 
 #[derive(Debug, Parser)]
 #[command(version, about)]
@@ -38,12 +38,19 @@ enum Mode {
     Receive,
 }
 
+const VERSION: u16 = 1;
+
 pub fn run() -> io::Result<()> {
     let args = Cli::parse();
     let mut stdout = std::io::stdout();
     match args.mode {
         Mode::Send => {
-            let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
+            let socket = UdpSocket::bind("[::]:0").unwrap();
+            let addr = socket.local_addr().unwrap();
+            let sender_fs = SenderFs::new(addr, Duration::from_secs(2), VERSION).unwrap();
+            let h = sender_fs.connect(socket).unwrap().unwrap();
+
+            /*
             let receiver = receiver_addr(socket, &args.password, args.timeout, args.port)
                 .unwrap_or_else(|| panic!("{}", "Faild to get receiver address.".bold().red()));
             thread::sleep(Duration::from_secs(2));
@@ -66,11 +73,12 @@ pub fn run() -> io::Result<()> {
                 if !stream.receive(&mut stdout).unwrap() {
                     break;
                 }
-            }
+            }*/
         }
         Mode::Receive => {
-            let socket = UdpSocket::bind(format!("0.0.0.0:{}", args.port)).unwrap();
+            let socket = UdpSocket::bind(format!("[::]:{}", args.port)).unwrap();
             let addr = socket.local_addr().unwrap();
+            /*
             let sender = sender_addr(socket, &args.password, args.timeout)
                 .unwrap_or_else(|| panic!("{}", "Faild to get receiver address.".bold().red()));
             let listener = TcpListener::bind(addr).unwrap();
@@ -90,12 +98,13 @@ pub fn run() -> io::Result<()> {
             for file in args.args {
                 stream.send_file(file, &mut stdout)?;
             }
-            stream.send_eof()?;
+            stream.send_eof()?;*/
         }
     }
     Ok(())
 }
 
+/*
 #[inline]
 fn receiver_addr<P: AsRef<[u8]>>(
     socket: UdpSocket,
@@ -136,4 +145,4 @@ fn get_sender_stream(listener: TcpListener, _sender_addr: SocketAddr) -> Option<
         }
     }
     None
-}
+}*/

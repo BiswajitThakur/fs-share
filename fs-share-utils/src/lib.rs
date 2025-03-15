@@ -5,7 +5,7 @@ mod utils;
 use argon2::Argon2;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
-pub use addr::{get_receiver_addr, get_sender_addr};
+pub use addr::get_sender_addr;
 use std::fmt::Write as FWrite;
 use std::io::{BufRead, BufWriter, Cursor};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
@@ -484,32 +484,82 @@ struct ReceiverFs<W> {
     stream: W,
 }
 
-enum ClientType {
-    Sender,
+pub enum ClientType {
+    Sender(SenderAddr),
     Receiver(ReceiverAddr),
 }
 
-struct SenderAddr {}
+pub struct SenderAddr {
+    broadcast_addr: SocketAddr,
+}
 
-struct ReceiverAddr {
+impl SenderAddr {
+    pub fn set_broadcast_addr(mut self, addr: SocketAddr) -> Self {
+        self.broadcast_addr = addr;
+        self
+    }
+    pub fn build(self) -> ClientType {
+        ClientType::Sender(self)
+    }
+}
+
+#[derive(Debug)]
+pub struct ReceiverAddr {
     tcp_listener_addr: SocketAddr,
     udp_socket_addr: SocketAddr,
     broadcast_addr: SocketAddr,
+}
+
+impl ReceiverAddr {
+    pub fn set_tcp_listener_addr(mut self, addr: SocketAddr) -> Self {
+        self.tcp_listener_addr = addr;
+        self
+    }
+    pub fn set_udp_socket_addr(mut self, addr: SocketAddr) -> Self {
+        self.udp_socket_addr = addr;
+        self
+    }
+    pub fn set_broadcast_addr(mut self, addr: SocketAddr) -> Self {
+        self.broadcast_addr = addr;
+        self
+    }
+    pub fn build(self) -> ClientType {
+        ClientType::Receiver(self)
+    }
 }
 
 impl ClientType {
     fn argon2() -> Argon2<'static> {
         Argon2::default()
     }
-    fn connect(self) -> io::Result<TcpStream> {
+    pub fn sender() -> SenderAddr {
+        let addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        SenderAddr {
+            broadcast_addr: SocketAddr::new(IpAddr::V6(addr), 0),
+        }
+    }
+    pub fn receiver() -> ReceiverAddr {
+        let default_addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
+        ReceiverAddr {
+            tcp_listener_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
+            udp_socket_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
+            broadcast_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
+        }
+    }
+    pub fn connect(self) -> io::Result<TcpStream> {
         match self {
-            Self::Sender => {}
+            Self::Sender(addr) => {
+                let addr = get_receiver_addr(addr.broadcast_addr)?;
+                println!("Receiver Addr: {}", addr);
+                let stream = TcpStream::connect(addr)?;
+                return Ok(stream);
+            }
             Self::Receiver(addr) => {
                 let listener = TcpListener::bind(addr.tcp_listener_addr)?;
                 let listener_port = listener.local_addr()?.port();
                 let is_running = Arc::new(Mutex::new(true));
                 let is_running1 = is_running.clone();
-                thread::spawn(move || {
+                let handler = thread::spawn(move || {
                     send_info(
                         listener_port,
                         is_running1,
@@ -518,26 +568,34 @@ impl ClientType {
                     )
                 });
                 for stream in listener.incoming() {
-                    let send_file_stream = stream?;
-                    let receive_file_stream = send_file_stream.try_clone()?;
-                    match verify(receive_file_stream) {
+                    let stream = stream?;
+                    //let receive_file_stream = send_file_stream.try_clone()?;
+                    match verify(stream) {
                         Ok(stream) => {
                             close_upd_thread(is_running.clone());
+                            println!("Sender Addr: {}", stream.local_addr().unwrap());
+                            handler.join().unwrap().unwrap();
+                            return Ok(stream);
                             //let (cx, rx) = mpsc::channel();
-                            thread::spawn(|| send_file(BufWriter::new(send_file_stream)));
-                            thread::spawn(|| receive_file(stream));
+                            //thread::spawn(|| send_file(BufWriter::new(send_file_stream)));
+                            //thread::spawn(|| receive_file(stream));
                         }
-                        Err(err) => eprintln!("{}", err),
+                        Err(err) => {
+                            eprintln!("{}", err);
+                        }
                     }
+                    continue;
                 }
+                unreachable!()
             }
         }
-        todo!()
     }
 }
 
-fn verify<W: io::Read>(stream: W) -> io::Result<BufReader<W>> {
-    todo!()
+fn verify(stream: TcpStream) -> io::Result<TcpStream> {
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    // TODO
+    Ok(stream)
 }
 
 fn send_file<W: io::Write>(send_stream: BufWriter<W>) -> io::Result<()> {
@@ -555,20 +613,42 @@ fn send_info(
     broadcast_addr: SocketAddr,
 ) -> io::Result<()> {
     let socket = UdpSocket::bind(socket_addr)?;
+    println!("Udp socket thread sterted"); // TODO: remove me
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(1)))?;
     let port = port.to_be_bytes();
-    let mut data = [0u8; 13];
-    data[10] = port[0];
-    data[11] = port[1];
+    let mut data = [0u8; 2];
+    // let mut data = [0u8; 13];
+    // data[10] = port[0];
+    // data[11] = port[1];
+    data[0] = port[0];
+    data[1] = port[1];
+    /*
     for (index, &b) in b":fs-share:".iter().enumerate() {
         data[index] = b;
-    }
+    }*/
     while *is_running.lock().unwrap() {
         socket.send_to(&data, broadcast_addr)?;
         thread::sleep(Duration::from_secs(1));
     }
+    println!("Udp socket thread closed"); // TODO: remove me
+
     Ok(())
+}
+
+fn get_receiver_addr(addr: SocketAddr) -> io::Result<SocketAddr> {
+    let socket = UdpSocket::bind(addr)?;
+    let mut buf = [0; 2];
+    loop {
+        match socket.recv_from(&mut buf) {
+            Ok((_, addr)) => {
+                let ip = addr.ip();
+                let port: u16 = u16::from_be_bytes(buf);
+                return Ok(SocketAddr::new(ip, port));
+            }
+            Err(err) => eprintln!("{}", err),
+        }
+    }
 }
 
 fn close_upd_thread(is_running: Arc<Mutex<bool>>) {

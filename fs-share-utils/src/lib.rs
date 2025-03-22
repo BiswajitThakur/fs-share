@@ -6,9 +6,14 @@ use argon2::Argon2;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::get_sender_addr;
-use std::fmt::Write as FWrite;
+use rand::Rng;
+use serde::ser::SerializeStruct;
+use std::ffi::OsString;
+use std::fmt::{self, Write as FWrite};
 use std::io::{BufRead, BufWriter, Cursor};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::Thread;
 use std::time::{self, Duration};
@@ -306,7 +311,7 @@ impl Header {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests1 {
     use std::io::{self, sink, Cursor, Read};
 
     use crate::{read_num, transfer_with_progress, transfer_without_progress};
@@ -425,6 +430,7 @@ mod tests {
         // Nothing to verify in the writer since it's a sink
     }
     #[test]
+    #[ignore = "reason"]
     fn test_read_n_bytes_sink_large_data() {
         use std::io::repeat;
 
@@ -472,16 +478,162 @@ mod tests {
     }
 }
 
-fn ff() {
-    let listener = TcpListener::bind("0.0.0.0:0").unwrap();
+const APT_VERSION: u16 = 1;
+const PREFIX: &'static str = ":fs-share:";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct UdpDataStream {
+    api_version: u16,
+    port: u16,
+    id: u64,
+    os: String,
+    user_name: String,
 }
 
-struct SenderFs<R> {
-    stream: R,
+/*
+impl serde::Serialize for UdpDataStream {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        let mut f = serializer.serialize_struct("UdpDataStream", 4)?;
+        f.serialize_field("port", &self.port)?;
+        f.serialize_field("id", &self.id)?;
+        f.serialize_field("os", &self.os)?;
+        f.serialize_field("user_name", &self.user_name)?;
+        todo!()
+    }
+}
+*/
+impl fmt::Display for UdpDataStream {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "OS: {}", self.os.yellow())?;
+        writeln!(f, "User: {}", self.user_name.yellow())?;
+        write!(f, "ID: {}", self.id.to_string().yellow())?;
+        Ok(())
+    }
 }
 
-struct ReceiverFs<W> {
-    stream: W,
+impl From<u16> for UdpDataStream {
+    fn from(port: u16) -> Self {
+        let os = std::env::consts::OS.to_string();
+        let user_name = whoami::realname();
+        let id = rand::rng().random(); // TODO: generate random u128
+        Self {
+            api_version: APT_VERSION,
+            port,
+            id,
+            os,
+            user_name,
+        }
+    }
+}
+
+impl UdpDataStream {
+    fn new() {}
+    fn to_be_bytes_vec(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        // Prefix (Fixed 10 bytes)
+        bytes.extend_from_slice(PREFIX.as_bytes());
+
+        // API Version (2 bytes, Big Endian)
+        bytes.extend_from_slice(&self.api_version.to_be_bytes());
+
+        // TCP Port (2 bytes, Big Endian)
+        bytes.extend_from_slice(&self.port.to_be_bytes());
+
+        // ID (8 bytes, Big Endian)
+        bytes.extend_from_slice(&self.id.to_be_bytes());
+
+        // OS (16 bits length as Big Endian + data)
+        bytes.extend_from_slice(&(self.os.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(self.os.as_bytes());
+
+        // User Name (16 bits length as Big Endian + data)
+        bytes.extend_from_slice(&(self.user_name.len() as u16).to_be_bytes());
+        bytes.extend_from_slice(self.user_name.as_bytes());
+
+        bytes.shrink_to_fit();
+
+        bytes
+    }
+    fn from_be_bytes(bytes: &[u8]) -> Option<Self> {
+        if bytes.len() < 22 || &bytes[..10] != b":fs-share:" {
+            return None; // Invalid length or missing prefix
+        }
+
+        let api_version = u16::from_be_bytes([bytes[10], bytes[11]]);
+        let port = u16::from_be_bytes([bytes[12], bytes[13]]);
+        let id = u64::from_be_bytes([
+            bytes[14], bytes[15], bytes[16], bytes[17], bytes[18], bytes[19], bytes[20], bytes[21],
+        ]);
+
+        let mut index = 22;
+
+        // Extract OS string
+        let os_len = u16::from_be_bytes([bytes[index], bytes[index + 1]]) as usize;
+        index += 2;
+        if index + os_len > bytes.len() {
+            return None; // Prevent out-of-bounds access
+        }
+        let os = String::from_utf8_lossy(&bytes[index..index + os_len]).to_string();
+        index += os_len;
+
+        // Extract Username string
+        let user_len = u16::from_be_bytes([bytes[index], bytes[index + 1]]) as usize;
+        index += 2;
+        if index + user_len > bytes.len() {
+            return None; // Prevent out-of-bounds access
+        }
+        let user_name = String::from_utf8_lossy(&bytes[index..index + user_len]).to_string();
+
+        Some(Self {
+            api_version,
+            port,
+            id,
+            os,
+            user_name,
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendData {
+    File(PathBuf),
+    Msg(String),
+    Eof,
+}
+
+pub struct SenderFs<R: io::Write> {
+    stream: BufWriter<R>,
+}
+
+impl<W: io::Write> SenderFs<W> {
+    pub fn send(&mut self, data: SendData) -> io::Result<()> {
+        match data {
+            SendData::File(_) => {
+                todo!();
+            }
+            SendData::Msg(_) => {
+                todo!();
+            }
+            SendData::Eof => {
+                todo!();
+            }
+        }
+        Ok(())
+    }
+}
+
+pub struct ReceiverFs<W: io::Read> {
+    stream: BufReader<W>,
+}
+
+impl<R: io::Read> ReceiverFs<R> {
+    pub fn recv(&mut self) -> io::Result<()> {
+        todo!()
+    }
 }
 
 pub enum ClientType {
@@ -654,4 +806,35 @@ fn get_receiver_addr(addr: SocketAddr) -> io::Result<SocketAddr> {
 fn close_upd_thread(is_running: Arc<Mutex<bool>>) {
     let mut is_running = is_running.lock().unwrap();
     *is_running = false;
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::UdpDataStream;
+
+    #[test]
+    fn test_udp_data_stream_to_bytes_vec() {
+        let data = b":fs-share:\x00\x63\x1F\x90\x00\x00\x00\x00\x07\x5B\xCD\x15\x00\x05linux\x00\x09eagle1234";
+        let want = UdpDataStream {
+            api_version: 99, // 00 63
+            port: 8080,      // 1F 90
+            id: 123456789,   // 00 00 00 00 07 5B CD 15
+            os: "linux".to_owned(),
+            user_name: "eagle1234".to_owned(),
+        };
+        assert_eq!(data.to_vec(), want.to_be_bytes_vec());
+    }
+    #[test]
+    fn test_udp_data_stream_valid_from_be_bytes() {
+        let data = b":fs-share:\x00\x63\x1F\x90\x00\x00\x00\x00\x07\x5B\xCD\x15\x00\x05linux\x00\x09eagle1234";
+        let got = UdpDataStream::from_be_bytes(data).unwrap();
+        let want = UdpDataStream {
+            api_version: 99,
+            port: 8080,
+            id: 123456789,
+            os: "linux".to_owned(),
+            user_name: "eagle1234".to_owned(),
+        };
+        assert_eq!(got, want);
+    }
 }

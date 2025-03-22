@@ -1,8 +1,14 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener};
+use std::{
+    cell::OnceCell,
+    net::{IpAddr, Ipv6Addr, SocketAddr, TcpListener},
+    thread,
+};
 
 use share_utils::ClientType;
 
 mod cli;
+
+const PASS: OnceCell<i32> = OnceCell::new();
 
 fn main() -> std::io::Result<()> {
     //cli::run()
@@ -11,14 +17,20 @@ fn main() -> std::io::Result<()> {
     //println!("Addr: {}", listener.local_addr().unwrap());
     let option = std::env::args().skip(1).next().unwrap();
     match option.as_str() {
-        "send" => {
+        "send" | "--send" => {
             println!("Send >>>>"); // TODO: remove me
             let client = ClientType::sender()
                 .set_broadcast_addr(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 3434))
                 .build();
             let stream = client.connect()?;
+            /*
+            let (sender, recv) = stream;
+            thread::spawn(move || recv.receive());
+            for file in files {
+                sender.send(file)?;
+            }*/
         }
-        "receive" => {
+        "receive" | "--receive" => {
             println!("Recv >>>>"); // TODO: remove me
             let client = ClientType::receiver()
                 .set_tcp_listener_addr(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
@@ -26,6 +38,12 @@ fn main() -> std::io::Result<()> {
                 .set_broadcast_addr(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 3434))
                 .build();
             let stream = client.connect()?;
+            /*
+            let (sender, recv) = stream;
+            thread::spawn(move || recv.receive());
+            for file in files {
+                sender.send(file)?;
+            }*/
         }
 
         _ => {}

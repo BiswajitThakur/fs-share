@@ -10,7 +10,7 @@ use rand::Rng;
 use serde::ser::SerializeStruct;
 use std::ffi::OsString;
 use std::fmt::{self, Write as FWrite};
-use std::io::{BufRead, BufWriter, Cursor};
+use std::io::{BufRead, BufWriter, Cursor, Read};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -680,10 +680,27 @@ impl ReceiverAddr {
     }
 }
 
-impl ClientType {
-    fn argon2() -> Argon2<'static> {
-        Argon2::default()
+pub enum TransmissionMode<T> {
+    HalfDuplex(T),
+    FullDuplex(T, T),
+}
+
+impl<T> TransmissionMode<T> {
+    pub fn is_half_duplex(&self) -> bool {
+        match self {
+            Self::HalfDuplex(_) => true,
+            _ => false,
+        }
     }
+    pub fn is_full_duplex(&self) -> bool {
+        match self {
+            Self::FullDuplex(_, _) => true,
+            _ => false,
+        }
+    }
+}
+
+impl ClientType {
     pub fn sender() -> SenderAddr {
         let addr = Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1);
         SenderAddr {
@@ -698,19 +715,14 @@ impl ClientType {
             broadcast_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
         }
     }
-    pub fn connect(
-        self,
-    ) -> io::Result<(
-        Arc<Mutex<BufReader<TcpStream>>>,
-        Arc<Mutex<BufWriter<TcpStream>>>,
-    )> {
+    pub fn connect(self) -> io::Result<TransmissionMode<TcpStream>> {
         match self {
             Self::Sender(addr) => {
                 let addr = recv_info(addr.broadcast_addr, Duration::from_secs(5))?;
                 println!("Receiver Addr: {}", addr.addr);
-                let stream = TcpStream::connect(addr.addr)?;
-                //return Ok(stream);
-                todo!()
+                let mut stream = TcpStream::connect(addr.addr)?;
+                verify_from_sender(&mut stream)?;
+                return sender_transmission_mode(stream);
             }
             Self::Receiver(addr) => {
                 let listener = TcpListener::bind(addr.tcp_listener_addr)?;
@@ -726,43 +738,83 @@ impl ClientType {
                     )
                 });
                 for stream in listener.incoming() {
-                    let stream = stream?;
-                    //let receive_file_stream = send_file_stream.try_clone()?;
-                    match verify(stream) {
-                        Ok(stream) => {
-                            close_upd_thread(is_running.clone());
-                            println!("Sender Addr: {}", stream.local_addr().unwrap());
-                            handler.join().unwrap().unwrap();
-                            todo!()
-                            //return Ok(stream);
-                            //let (cx, rx) = mpsc::channel();
-                            //thread::spawn(|| send_file(BufWriter::new(send_file_stream)));
-                            //thread::spawn(|| receive_file(stream));
-                        }
-                        Err(err) => {
-                            eprintln!("{}", err);
-                        }
+                    let mut stream = stream?;
+                    if let Err(_) = verify_from_receiver(&mut stream) {
+                        continue;
                     }
-                    continue;
+                    close_upd_thread(is_running.clone());
+                    println!("Sender Addr: {}", stream.local_addr().unwrap());
+                    handler.join().unwrap().unwrap();
+                    return receiver_transmission_mode(stream);
                 }
                 unreachable!()
             }
         }
     }
 }
-
-fn verify(stream: TcpStream) -> io::Result<TcpStream> {
-    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
-    // TODO
-    Ok(stream)
+fn verify_from_sender(_stream: &mut TcpStream) -> io::Result<()> {
+    // TODO:
+    Ok(())
+}
+fn verify_from_receiver(_stream: &mut TcpStream) -> io::Result<()> {
+    // TODO:
+    Ok(())
 }
 
-fn send_file<W: io::Write>(send_stream: BufWriter<W>) -> io::Result<()> {
-    todo!()
+fn sender_transmission_mode(stream: TcpStream) -> io::Result<TransmissionMode<TcpStream>> {
+    let full_duplex = [111, 0, 111];
+    let half_duplex = [0, 111, 0];
+    let mut buf = [0; 3];
+    match (stream.try_clone(), stream) {
+        (Ok(mut stream1), stream2) => {
+            stream1.write_all(&full_duplex)?;
+            stream1.read_exact(&mut buf)?;
+            if buf == full_duplex {
+                Ok(TransmissionMode::FullDuplex(stream1, stream2))
+            } else if buf == half_duplex {
+                Ok(TransmissionMode::HalfDuplex(stream1))
+            } else {
+                unreachable!()
+            }
+        }
+        (Err(_), mut stream) => {
+            stream.write_all(&half_duplex)?;
+            stream.read_exact(&mut buf)?;
+            if buf == full_duplex || buf == half_duplex {
+                Ok(TransmissionMode::HalfDuplex(stream))
+            } else {
+                unreachable!()
+            }
+        }
+    }
 }
 
-fn receive_file<W: io::Read>(recv_stream: BufReader<W>) -> io::Result<()> {
-    todo!()
+fn receiver_transmission_mode(stream: TcpStream) -> io::Result<TransmissionMode<TcpStream>> {
+    let full_duplex = [111, 0, 111];
+    let half_duplex = [0, 111, 0];
+    let mut buf = [0; 3];
+    match (stream.try_clone(), stream) {
+        (Ok(mut stream1), stream2) => {
+            stream1.read_exact(&mut buf)?;
+            stream1.write_all(&full_duplex)?;
+            if buf == full_duplex {
+                Ok(TransmissionMode::FullDuplex(stream1, stream2))
+            } else if buf == half_duplex {
+                Ok(TransmissionMode::HalfDuplex(stream1))
+            } else {
+                unreachable!()
+            }
+        }
+        (Err(_), mut stream) => {
+            stream.read_exact(&mut buf)?;
+            stream.write_all(&half_duplex)?;
+            if buf == full_duplex || buf == half_duplex {
+                Ok(TransmissionMode::HalfDuplex(stream))
+            } else {
+                unreachable!()
+            }
+        }
+    }
 }
 
 fn send_info(
@@ -847,11 +899,13 @@ mod tests {
     fn test_udp_data_stream_to_bytes_vec() {
         let data = b":fs-share:\x00\x63\x1F\x90\x00\x00\x00\x00\x07\x5B\xCD\x15\x00\x05linux\x00\x09eagle1234";
         let want = UdpDataStream {
-            api_version: 99, // 00 63
-            port: 8080,      // 1F 90
-            id: 123456789,   // 00 00 00 00 07 5B CD 15
-            os: "linux".to_owned(),
-            user_name: "eagle1234".to_owned(),
+            api_version: 99,        // \x00\x63
+            port: 8080,             // \x1F\x90
+            id: 123456789,          // \x00\x00\x00\x00\x07\x5B\xCD\x15
+            os: "linux".to_owned(), // \x00\x09linux
+            //                         |------| => 16 bit length of str 'linux'
+            user_name: "eagle1234".to_owned(), // \x00\x09eagle1234
+                                               // |------|  => 16 bit length of str 'eagle1234'
         };
         assert_eq!(data.to_vec(), want.to_be_bytes_vec());
     }

@@ -599,31 +599,58 @@ impl UdpDataStream {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SendData {
-    File(PathBuf),
+pub enum RecvType {
+    File(String),
+    Eof,
+}
+
+pub trait RecvDataWithoutPd: BufRead {
+    fn recv_data_without_pd(&mut self) -> io::Result<RecvType> {
+        todo!()
+    }
+}
+
+impl RecvDataWithoutPd for BufReader<TcpStream> {}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SendData<T> {
+    /// fff:\xXX\xXX<file name><64 bit size of file><...file...>\xEE\xFF
+    ///     ^------^ => 16 bit length of file name
+    File(T),
     Msg(String),
     Eof,
 }
 
-pub struct SenderFs<R: io::Write> {
-    stream: BufWriter<R>,
-}
-
-impl<W: io::Write> SenderFs<W> {
-    pub fn send(&mut self, data: SendData) -> io::Result<()> {
-        match data {
-            SendData::File(_) => {
-                todo!();
+impl<T: AsRef<Path>> SendData<T> {
+    pub fn send_without_progress<W: io::Write>(self, stream: &mut BufWriter<W>) -> io::Result<()> {
+        match self {
+            Self::File(path) => {
+                let file_name = path
+                    .as_ref()
+                    .file_name()
+                    .expect("not a file")
+                    .to_str()
+                    .unwrap();
+                assert!(file_name.len() < u16::MAX as usize);
+                let file = fs::File::open(&path)?;
+                let file_len = file.metadata()?.len();
+                let mut reader = BufReader::new(file);
+                stream.write_all(b"fff:")?; // sending file
+                stream.write_all(&(file_name.len() as u16).to_be_bytes())?; // sending 16 bit length of file
+                stream.write_all(file_name.as_bytes())?; // sending file name
+                stream.write_all(&file_len.to_be_bytes())?; // sending 64 bit length of file
+                io::copy(&mut reader, stream)?; // sending the file
+                stream.write_all(b"\xEE\xFF")?; // End of file
             }
-            SendData::Msg(_) => {
-                todo!();
-            }
-            SendData::Eof => {
-                todo!();
-            }
+            Self::Eof => stream.write_all(b":00:")?,
+            _ => {}
         }
         Ok(())
     }
+}
+
+pub struct SenderFs<R: io::Write> {
+    stream: BufWriter<R>,
 }
 
 pub struct ReceiverFs<W: io::Read> {
@@ -719,7 +746,7 @@ impl ClientType {
         match self {
             Self::Sender(addr) => {
                 let addr = recv_info(addr.broadcast_addr, Duration::from_secs(5))?;
-                println!("Receiver Addr: {}", addr.addr);
+                println!("{:#?}", addr);
                 let mut stream = TcpStream::connect(addr.addr)?;
                 verify_from_sender(&mut stream)?;
                 return sender_transmission_mode(stream);

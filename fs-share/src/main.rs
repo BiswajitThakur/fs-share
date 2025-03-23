@@ -1,9 +1,11 @@
 use std::{
-    io,
+    io::{self, BufReader, BufWriter},
     net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream},
+    path::{Path, PathBuf},
+    thread,
 };
 
-use share_utils::{ClientType, TransmissionMode};
+use share_utils::{ClientType, RecvDataWithoutPd, RecvType, SendData, TransmissionMode};
 
 mod cli;
 
@@ -20,7 +22,7 @@ fn main() -> std::io::Result<()> {
                 ))
                 .build();
             let mode = client.connect()?;
-            handle_sender(mode)?;
+            handle_connection_sender_without_pd(mode)?;
         }
         "receive" | "--receive" => {
             let client = ClientType::receiver()
@@ -32,43 +34,62 @@ fn main() -> std::io::Result<()> {
                 ))
                 .build();
             let mode = client.connect()?;
-            handle_receiver(mode)?;
+            handle_connection_receiver(mode)?;
         }
         _ => {}
     }
     Ok(())
 }
 
-fn handle_sender(mode: TransmissionMode<TcpStream>) -> io::Result<()> {
+fn handle_connection_sender_without_pd(mode: TransmissionMode<TcpStream>) -> io::Result<()> {
     match mode {
-        TransmissionMode::HalfDuplex(stream) => handle_half_duplex_sender(stream),
+        TransmissionMode::HalfDuplex(stream) => handle_half_duplex_sender_without_pd(stream),
         TransmissionMode::FullDuplex(stream1, stream2) => {
-            handle_full_duplex_sender(stream1, stream2)
+            handle_full_duplex_without_pd(stream1, stream2)
         }
     }
 }
-
-fn handle_half_duplex_sender(_stream: TcpStream) -> io::Result<()> {
-    todo!()
-}
-
-fn handle_full_duplex_sender(_stream1: TcpStream, _stream2: TcpStream) -> io::Result<()> {
-    todo!()
-}
-
-fn handle_receiver(mode: TransmissionMode<TcpStream>) -> io::Result<()> {
+fn handle_connection_receiver(mode: TransmissionMode<TcpStream>) -> io::Result<()> {
     match mode {
         TransmissionMode::HalfDuplex(stream) => handle_half_duplex_receiver(stream),
         TransmissionMode::FullDuplex(stream1, stream2) => {
-            handle_full_duplex_receiver(stream1, stream2)
+            handle_full_duplex_without_pd(stream1, stream2)
         }
     }
+}
+
+fn handle_half_duplex_sender_without_pd(_stream: TcpStream) -> io::Result<()> {
+    todo!()
 }
 
 fn handle_half_duplex_receiver(_stream: TcpStream) -> io::Result<()> {
     todo!()
 }
 
-fn handle_full_duplex_receiver(_stream1: TcpStream, _stream2: TcpStream) -> io::Result<()> {
-    todo!()
+fn handle_full_duplex_without_pd(stream1: TcpStream, stream2: TcpStream) -> io::Result<()> {
+    let mut receiver = BufReader::new(stream1);
+    let sender = BufWriter::new(stream2);
+    let files = Vec::<PathBuf>::new();
+    let handler = thread::spawn(move || send_files_without_progress(sender, files));
+    loop {
+        match receiver.recv_data_without_pd() {
+            Ok(RecvType::Eof) => break,
+            Err(err) => return Err(err),
+            _ => {}
+        }
+    }
+    if let Err(err) = handler.join().unwrap() {
+        eprintln!("{}", err);
+    };
+    Ok(())
+}
+
+fn send_files_without_progress<W: io::Write, T: AsRef<Path>>(
+    mut stream: BufWriter<W>,
+    files: Vec<T>,
+) -> io::Result<()> {
+    for file in files {
+        SendData::File(file).send_without_progress(&mut stream)?;
+    }
+    SendData::<T>::Eof.send_without_progress(&mut stream)
 }

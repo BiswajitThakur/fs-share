@@ -698,13 +698,19 @@ impl ClientType {
             broadcast_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
         }
     }
-    pub fn connect(self) -> io::Result<TcpStream> {
+    pub fn connect(
+        self,
+    ) -> io::Result<(
+        Arc<Mutex<BufReader<TcpStream>>>,
+        Arc<Mutex<BufWriter<TcpStream>>>,
+    )> {
         match self {
             Self::Sender(addr) => {
-                let addr = get_receiver_addr(addr.broadcast_addr)?;
-                println!("Receiver Addr: {}", addr);
-                let stream = TcpStream::connect(addr)?;
-                return Ok(stream);
+                let addr = recv_info(addr.broadcast_addr, Duration::from_secs(5))?;
+                println!("Receiver Addr: {}", addr.addr);
+                let stream = TcpStream::connect(addr.addr)?;
+                //return Ok(stream);
+                todo!()
             }
             Self::Receiver(addr) => {
                 let listener = TcpListener::bind(addr.tcp_listener_addr)?;
@@ -727,7 +733,8 @@ impl ClientType {
                             close_upd_thread(is_running.clone());
                             println!("Sender Addr: {}", stream.local_addr().unwrap());
                             handler.join().unwrap().unwrap();
-                            return Ok(stream);
+                            todo!()
+                            //return Ok(stream);
                             //let (cx, rx) = mpsc::channel();
                             //thread::spawn(|| send_file(BufWriter::new(send_file_stream)));
                             //thread::spawn(|| receive_file(stream));
@@ -768,35 +775,52 @@ fn send_info(
     println!("Udp socket thread sterted"); // TODO: remove me
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-    let port = port.to_be_bytes();
-    let mut data = [0u8; 2];
-    // let mut data = [0u8; 13];
-    // data[10] = port[0];
-    // data[11] = port[1];
-    data[0] = port[0];
-    data[1] = port[1];
-    /*
-    for (index, &b) in b":fs-share:".iter().enumerate() {
-        data[index] = b;
-    }*/
+    let data = UdpDataStream::from(port).to_be_bytes_vec();
     while *is_running.lock().unwrap() {
         socket.send_to(&data, broadcast_addr)?;
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(Duration::from_millis(333));
     }
     println!("Udp socket thread closed"); // TODO: remove me
-
     Ok(())
 }
 
-fn get_receiver_addr(addr: SocketAddr) -> io::Result<SocketAddr> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClientInfo {
+    api_version: u16,
+    id: u64,
+    os: String,
+    user_name: String,
+    addr: SocketAddr,
+}
+
+fn recv_info(addr: SocketAddr, time_out: Duration) -> io::Result<ClientInfo> {
     let socket = UdpSocket::bind(addr)?;
-    let mut buf = [0; 2];
+    socket.set_read_timeout(Some(time_out))?;
+    // TODO: use heap allocated buffer if needed
+    let mut buf = [0; 2048];
     loop {
         match socket.recv_from(&mut buf) {
-            Ok((_, addr)) => {
-                let ip = addr.ip();
-                let port: u16 = u16::from_be_bytes(buf);
-                return Ok(SocketAddr::new(ip, port));
+            Ok((n, addr)) => {
+                let recv = &buf[0..n];
+                let data = UdpDataStream::from_be_bytes(recv);
+                if data.is_none() {
+                    continue;
+                }
+                let UdpDataStream {
+                    api_version,
+                    port,
+                    id,
+                    os,
+                    user_name,
+                } = data.unwrap();
+                let addr = SocketAddr::new(addr.ip(), port);
+                return Ok(ClientInfo {
+                    api_version,
+                    id,
+                    os,
+                    user_name,
+                    addr,
+                });
             }
             Err(err) => eprintln!("{}", err),
         }
@@ -810,7 +834,14 @@ fn close_upd_thread(is_running: Arc<Mutex<bool>>) {
 
 #[cfg(test)]
 mod tests {
-    use crate::UdpDataStream;
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr},
+        sync::{Arc, Mutex},
+        thread,
+        time::Duration,
+    };
+
+    use crate::{recv_info, send_info, UdpDataStream};
 
     #[test]
     fn test_udp_data_stream_to_bytes_vec() {
@@ -836,5 +867,40 @@ mod tests {
             user_name: "eagle1234".to_owned(),
         };
         assert_eq!(got, want);
+    }
+    #[test]
+    fn test_udp_data_stream_invalid_from_be_bytes() {
+        let data = b":fs-share:\x00\x63\x1F\x90\x00\x00\x00\x00\x07\x5B\xCD\x15\x00\x05linux\x00\x0Aeagle1234";
+        let got = UdpDataStream::from_be_bytes(data);
+        assert!(got.is_none());
+        let data = b":fs-sharE:\x00\x63\x1F\x90\x00\x00\x00\x00\x07\x5B\xCD\x15\x00\x05linux\x00\x09eagle1234";
+        let got = UdpDataStream::from_be_bytes(data);
+        assert!(got.is_none());
+    }
+    #[test]
+    fn test_send_info() {
+        let port = 8080;
+        let is_running = Arc::new(Mutex::new(true));
+        let is_running_cloned = is_running.clone();
+        let broadcast_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 7766);
+        let handler = thread::spawn(move || {
+            send_info(
+                port,
+                is_running_cloned,
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+                broadcast_addr,
+            )
+            .unwrap();
+        });
+        // wait a while to start above thread
+        thread::sleep(Duration::from_millis(200));
+        let info = recv_info(broadcast_addr, Duration::from_secs(1)).unwrap();
+        // stop the thread
+        *is_running.lock().unwrap() = false;
+        handler.join().unwrap();
+        assert_eq!(
+            info.addr,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port)
+        );
     }
 }

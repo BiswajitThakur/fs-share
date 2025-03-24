@@ -8,6 +8,7 @@ use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 pub use addr::get_sender_addr;
 use rand::Rng;
 use serde::ser::SerializeStruct;
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::{self, Write as FWrite};
 use std::io::{BufRead, BufWriter, Cursor, Read};
@@ -745,11 +746,19 @@ impl ClientType {
     pub fn connect(self) -> io::Result<TransmissionMode<TcpStream>> {
         match self {
             Self::Sender(addr) => {
-                let addr = recv_info(addr.broadcast_addr, Duration::from_secs(5))?;
-                println!("{:#?}", addr);
-                let mut stream = TcpStream::connect(addr.addr)?;
-                verify_from_sender(&mut stream)?;
-                return sender_transmission_mode(stream);
+                let mut block_addrs = HashSet::new();
+                loop {
+                    let info =
+                        recv_info(addr.broadcast_addr, Duration::from_secs(5), &block_addrs)?;
+                    println!("{:#?}", info);
+                    let mut stream = TcpStream::connect(info.addr)?;
+                    if let Err(err) = verify_from_sender(&mut stream) {
+                        block_addrs.insert(info.addr);
+                        eprintln!("{}", err);
+                        continue;
+                    };
+                    return sender_transmission_mode(stream);
+                }
             }
             Self::Receiver(addr) => {
                 let listener = TcpListener::bind(addr.tcp_listener_addr)?;
@@ -764,13 +773,20 @@ impl ClientType {
                         addr.broadcast_addr,
                     )
                 });
+                let mut block_addrs = HashSet::new();
                 for stream in listener.incoming() {
                     let mut stream = stream?;
-                    if let Err(_) = verify_from_receiver(&mut stream) {
+                    if block_addrs.contains(&stream.peer_addr().unwrap()) {
+                        continue;
+                    }
+                    if let Err(err) = verify_from_receiver(&mut stream) {
+                        block_addrs.insert(stream.peer_addr().unwrap());
+                        eprintln!("{}", err);
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
                         continue;
                     }
                     close_upd_thread(is_running.clone());
-                    println!("Sender Addr: {}", stream.local_addr().unwrap());
+                    println!("Sender Addr: {}", stream.peer_addr().unwrap());
                     handler.join().unwrap().unwrap();
                     return receiver_transmission_mode(stream);
                 }
@@ -872,7 +888,11 @@ struct ClientInfo {
     addr: SocketAddr,
 }
 
-fn recv_info(addr: SocketAddr, time_out: Duration) -> io::Result<ClientInfo> {
+fn recv_info(
+    addr: SocketAddr,
+    time_out: Duration,
+    block_addrs: &HashSet<SocketAddr>,
+) -> io::Result<ClientInfo> {
     let socket = UdpSocket::bind(addr)?;
     socket.set_read_timeout(Some(time_out))?;
     // TODO: use heap allocated buffer if needed
@@ -880,6 +900,9 @@ fn recv_info(addr: SocketAddr, time_out: Duration) -> io::Result<ClientInfo> {
     loop {
         match socket.recv_from(&mut buf) {
             Ok((n, addr)) => {
+                if block_addrs.contains(&addr) {
+                    continue;
+                }
                 let recv = &buf[0..n];
                 let data = UdpDataStream::from_be_bytes(recv);
                 if data.is_none() {

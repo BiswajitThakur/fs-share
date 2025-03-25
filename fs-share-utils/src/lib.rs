@@ -669,6 +669,7 @@ pub trait RecvDataWithoutPd: BufRead {
 }
 
 impl RecvDataWithoutPd for BufReader<TcpStream> {}
+impl RecvDataWithoutPd for BufReader<&mut TcpStream> {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SendData<T> {
@@ -781,6 +782,15 @@ impl<T> TransmissionMode<T> {
         match self {
             Self::FullDuplex(_, _) => true,
             _ => false,
+        }
+    }
+}
+
+impl TransmissionMode<TcpStream> {
+    pub fn peer_addr(&self) -> io::Result<SocketAddr> {
+        match self {
+            Self::HalfDuplex(stream) => stream.peer_addr(),
+            Self::FullDuplex(stream, _) => stream.peer_addr(),
         }
     }
 }

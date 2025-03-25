@@ -58,12 +58,44 @@ fn handle_connection_receiver(mode: TransmissionMode<TcpStream>) -> io::Result<(
     }
 }
 
-fn handle_half_duplex_sender_without_pd(_stream: TcpStream) -> io::Result<()> {
-    todo!()
+fn handle_half_duplex_sender_without_pd(mut stream: TcpStream) -> io::Result<()> {
+    {
+        let mut sender = BufWriter::new(&mut stream);
+        for file in std::env::args().skip(2) {
+            SendData::File(file).send_without_progress(&mut sender)?;
+        }
+        SendData::<PathBuf>::Eof.send_without_progress(&mut sender)?;
+    }
+    let mut receiver = BufReader::new(stream);
+    loop {
+        match receiver.recv_data_without_pd() {
+            Ok(RecvType::Eof) => break,
+            Ok(RecvType::File(name)) => {
+                println!("File Received: {}", name);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
 }
 
-fn handle_half_duplex_receiver(_stream: TcpStream) -> io::Result<()> {
-    todo!()
+fn handle_half_duplex_receiver(mut stream: TcpStream) -> io::Result<()> {
+    let mut receiver = BufReader::new(&mut stream);
+    loop {
+        match receiver.recv_data_without_pd() {
+            Ok(RecvType::Eof) => break,
+            Ok(RecvType::File(name)) => {
+                println!("File Received: {}", name);
+            }
+            Err(err) => return Err(err),
+        }
+    }
+    let mut sender = BufWriter::new(&mut stream);
+    for file in std::env::args().skip(2) {
+        SendData::File(file).send_without_progress(&mut sender)?;
+    }
+    SendData::<PathBuf>::Eof.send_without_progress(&mut sender)?;
+    Ok(())
 }
 
 fn handle_full_duplex_without_pd(stream1: TcpStream, stream2: TcpStream) -> io::Result<()> {

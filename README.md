@@ -7,14 +7,6 @@ A cross-platform file-sharing CLI application written in Rust. It enables effici
 
 # Under Development
 
-## Features
-
-- **Cross-platform support**: Works on Linux, macOS and Windows.
-- **Two-way file sharing**: Both **Send** and **Receive** modes allow file transfers.
-- **Efficient transfer**: Utilizes TCP for file transfers and UDP for peer discovery.
-- **Real-time progress bar**: Tracks transfer status with detailed metrics.
-- **Small binary size**: Less then 2 MB.
-
 ## Installation
 
 ```
@@ -32,24 +24,6 @@ fs-share --version
 ```
 
 ## Usage
-
-### Help
-
-```
-Usage: fs-share [OPTIONS] <MODE> [ARGS]...
-
-Arguments:
-  <MODE>     [possible values: send, receive]
-  [ARGS]...  Args
-
-Options:
-      --name <NAME>          Name [default: Unknown]
-      --password <PASSWORD>  password [default: password]
-      --port <PORT>          port [default: 34254]
-      --timeout <TIMEOUT>    Timeout [default: 60]
-  -h, --help                 Print help
-  -V, --version              Print version
-```
 
 ### Modes
 

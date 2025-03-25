@@ -1,10 +1,11 @@
 use std::{
-    io::{self, BufReader, BufWriter},
+    io::{self, stdout, BufReader, BufWriter},
     net::{IpAddr, Ipv6Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     thread,
 };
 
+use indicatif::MultiProgress;
 use share_utils::{ClientType, RecvDataWithoutPd, RecvType, SendData, TransmissionMode};
 
 mod cli;
@@ -12,6 +13,8 @@ mod cli;
 const BROADCAST_PORT: u16 = 34345;
 
 fn main() -> std::io::Result<()> {
+    let mut stdout = stdout();
+    let multi_pd = MultiProgress::new();
     let option = std::env::args().skip(1).next().unwrap();
     match option.as_str() {
         "send" | "--send" => {
@@ -21,7 +24,7 @@ fn main() -> std::io::Result<()> {
                     BROADCAST_PORT,
                 ))
                 .build();
-            let mode = client.connect()?;
+            let mode = client.connect(&mut stdout, None)?;
             handle_connection_sender_without_pd(mode)?;
         }
         "receive" | "--receive" => {
@@ -33,7 +36,7 @@ fn main() -> std::io::Result<()> {
                     BROADCAST_PORT,
                 ))
                 .build();
-            let mode = client.connect()?;
+            let mode = client.connect(&mut stdout, Some("eagle1234"))?;
             handle_connection_receiver(mode)?;
         }
         _ => {}

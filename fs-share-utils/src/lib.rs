@@ -6,12 +6,12 @@ use argon2::Argon2;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::get_sender_addr;
-use rand::Rng;
+use rand::{random, Rng};
 use serde::ser::SerializeStruct;
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fmt::{self, Write as FWrite};
-use std::io::{BufRead, BufWriter, Cursor, Read};
+use std::io::{stdin, BufRead, BufWriter, Cursor, Read};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
 use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
@@ -491,21 +491,6 @@ struct UdpDataStream {
     user_name: String,
 }
 
-/*
-impl serde::Serialize for UdpDataStream {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        let mut f = serializer.serialize_struct("UdpDataStream", 4)?;
-        f.serialize_field("port", &self.port)?;
-        f.serialize_field("id", &self.id)?;
-        f.serialize_field("os", &self.os)?;
-        f.serialize_field("user_name", &self.user_name)?;
-        todo!()
-    }
-}
-*/
 impl fmt::Display for UdpDataStream {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "OS: {}", self.os.yellow())?;
@@ -531,7 +516,6 @@ impl From<u16> for UdpDataStream {
 }
 
 impl UdpDataStream {
-    fn new() {}
     fn to_be_bytes_vec(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
 
@@ -810,17 +794,81 @@ impl ClientType {
             broadcast_addr: SocketAddr::new(IpAddr::V6(default_addr), 0),
         }
     }
-    pub fn connect(self) -> io::Result<TransmissionMode<TcpStream>> {
+    pub fn connect<W: io::Write>(
+        self,
+        stdout: &mut W,
+        name: Option<&str>,
+    ) -> io::Result<TransmissionMode<TcpStream>> {
+        let name = name.map(|v| v.to_owned()).unwrap_or(whoami::realname());
+        writeln!(stdout, "{}", "--------Your--------".bold().italic().red())?;
+        writeln!(stdout, "Name: {}", name.bold().red())?;
+        let id = rand::rng().random::<u64>();
+        writeln!(stdout, "Unique ID: {}", id.to_string().bold().red())?;
+        writeln!(
+            stdout,
+            "Operating System: {}",
+            std::env::consts::OS.bold().red()
+        )?;
+        writeln!(stdout, "{}", "--------------------".bold().italic().red())?;
         match self {
             Self::Sender(addr) => {
-                let mut block_addrs = HashSet::new();
+                let mut block_ips = HashSet::new();
                 loop {
-                    let info =
-                        recv_info(addr.broadcast_addr, Duration::from_secs(5), &block_addrs)?;
-                    println!("{:#?}", info);
+                    let info = recv_info(addr.broadcast_addr, Duration::from_secs(5), &block_ips)?;
+                    writeln!(
+                        stdout,
+                        "{}",
+                        "---------Receiver---------".bold().italic().cyan()
+                    )?;
+                    writeln!(stdout, "Name: {}", info.user_name.bold().green())?;
+                    writeln!(stdout, "Unique ID: {}", info.id.to_string().bold().green())?;
+                    writeln!(stdout, "IP: {}", info.addr.ip().to_string().bold().green())?;
+                    writeln!(stdout, "Operating System: {}", info.os.bold().green())?;
+                    writeln!(
+                        stdout,
+                        "{}",
+                        "--------------------------".bold().italic().cyan()
+                    )?;
+                    write!(
+                        stdout,
+                        "Do you want to connect ({}/{}): ",
+                        "y".green(),
+                        "n".red()
+                    )?;
+                    stdout.flush()?;
+                    match stdin().lines().next().unwrap()?.to_lowercase().trim() {
+                        "y" | "yes" => {}
+                        "n" | "no" => {
+                            block_ips.insert(info.addr.ip());
+                            continue;
+                        }
+                        _ => {
+                            continue;
+                        }
+                    }
+                    writeln!(
+                        stdout,
+                        "Trying to connect to the address: {}",
+                        info.addr.to_string().bold().green()
+                    )?;
                     let mut stream = TcpStream::connect(info.addr)?;
+                    stream.write_all(
+                        &UdpDataStream {
+                            api_version: APT_VERSION,
+                            port: 0,
+                            id,
+                            os: std::env::consts::OS.to_owned(),
+                            user_name: name.clone(),
+                        }
+                        .to_be_bytes_vec(),
+                    )?;
+                    writeln!(
+                        stdout,
+                        "{}",
+                        "Waiting for receiver conformation".bold().yellow()
+                    )?;
                     if let Err(err) = verify_from_sender(&mut stream) {
-                        block_addrs.insert(info.addr);
+                        //block_ips.insert(info.addr);
                         eprintln!("{}", err);
                         continue;
                     };
@@ -835,19 +883,24 @@ impl ClientType {
                 let handler = thread::spawn(move || {
                     send_info(
                         listener_port,
+                        name,
+                        id,
                         is_running1,
                         addr.udp_socket_addr,
                         addr.broadcast_addr,
                     )
                 });
                 let mut block_addrs = HashSet::new();
+                let mut buf = [0; 2048];
                 for stream in listener.incoming() {
                     let mut stream = stream?;
-                    if block_addrs.contains(&stream.peer_addr().unwrap()) {
+                    if block_addrs.contains(&stream.peer_addr().unwrap().ip()) {
+                        let _ = stream.shutdown(std::net::Shutdown::Both);
                         continue;
                     }
-                    if let Err(err) = verify_from_receiver(&mut stream) {
-                        block_addrs.insert(stream.peer_addr().unwrap());
+
+                    if let Err(err) = verify_from_receiver(&mut stream, stdout) {
+                        block_addrs.insert(stream.peer_addr().unwrap().ip());
                         eprintln!("{}", err);
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         continue;
@@ -862,12 +915,18 @@ impl ClientType {
         }
     }
 }
+
+fn read_data_stream<R: io::Read>(r: &mut R) -> io::Result<Option<UdpDataStream>> {
+    let mut buf = [0; 1024];
+}
+
 fn verify_from_sender(_stream: &mut TcpStream) -> io::Result<()> {
     // TODO:
     Ok(())
 }
-fn verify_from_receiver(_stream: &mut TcpStream) -> io::Result<()> {
+fn verify_from_receiver<W: io::Write>(_stream: &mut TcpStream, stdout: &mut W) -> io::Result<()> {
     // TODO:
+
     Ok(())
 }
 
@@ -929,6 +988,8 @@ fn receiver_transmission_mode(stream: TcpStream) -> io::Result<TransmissionMode<
 
 fn send_info(
     port: u16,
+    user_name: String,
+    id: u64,
     is_running: Arc<Mutex<bool>>,
     socket_addr: SocketAddr,
     broadcast_addr: SocketAddr,
@@ -937,7 +998,15 @@ fn send_info(
     println!("Udp socket thread sterted"); // TODO: remove me
     socket.set_broadcast(true)?;
     socket.set_read_timeout(Some(Duration::from_secs(1)))?;
-    let data = UdpDataStream::from(port).to_be_bytes_vec();
+    let data = UdpDataStream {
+        api_version: APT_VERSION,
+        port,
+        id,
+        os: std::env::consts::OS.to_string(),
+        user_name,
+    }
+    .to_be_bytes_vec();
+    //let data = UdpDataStream::from(port).to_be_bytes_vec();
     while *is_running.lock().unwrap() {
         socket.send_to(&data, broadcast_addr)?;
         thread::sleep(Duration::from_millis(333));
@@ -958,7 +1027,7 @@ struct ClientInfo {
 fn recv_info(
     addr: SocketAddr,
     time_out: Duration,
-    block_addrs: &HashSet<SocketAddr>,
+    block_ips: &HashSet<IpAddr>,
 ) -> io::Result<ClientInfo> {
     let socket = UdpSocket::bind(addr)?;
     socket.set_read_timeout(Some(time_out))?;
@@ -966,10 +1035,7 @@ fn recv_info(
     let mut buf = [0; 2048];
     loop {
         match socket.recv_from(&mut buf) {
-            Ok((n, addr)) => {
-                if block_addrs.contains(&addr) {
-                    continue;
-                }
+            Ok((n, addr)) if !block_ips.contains(&addr.ip()) => {
                 let recv = &buf[0..n];
                 let data = UdpDataStream::from_be_bytes(recv);
                 if data.is_none() {
@@ -982,15 +1048,16 @@ fn recv_info(
                     os,
                     user_name,
                 } = data.unwrap();
-                let addr = SocketAddr::new(addr.ip(), port);
+                let addr2 = SocketAddr::new(addr.ip(), port);
                 return Ok(ClientInfo {
                     api_version,
                     id,
                     os,
                     user_name,
-                    addr,
+                    addr: addr2,
                 });
             }
+            Ok(_) => {}
             Err(err) => eprintln!("{}", err),
         }
     }
@@ -1004,11 +1071,14 @@ fn close_upd_thread(is_running: Arc<Mutex<bool>>) {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::HashSet,
         net::{IpAddr, Ipv4Addr, SocketAddr},
         sync::{Arc, Mutex},
         thread,
         time::Duration,
     };
+
+    use rand::Rng;
 
     use crate::{recv_info, send_info, UdpDataStream};
 
@@ -1025,6 +1095,15 @@ mod tests {
                                                // |------|  => 16 bit length of str 'eagle1234'
         };
         assert_eq!(data.to_vec(), want.to_be_bytes_vec());
+        let data = b":fs-share:\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        let want = UdpDataStream {
+            api_version: 0,
+            port: 0,
+            id: 0,
+            os: "".to_owned(),
+            user_name: "".to_owned(),
+        };
+        assert_eq!(data.to_vec(), want.to_be_bytes_vec());
     }
     #[test]
     fn test_udp_data_stream_valid_from_be_bytes() {
@@ -1036,6 +1115,16 @@ mod tests {
             id: 123456789,
             os: "linux".to_owned(),
             user_name: "eagle1234".to_owned(),
+        };
+        assert_eq!(got, want);
+        let data = b":fs-share:\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00";
+        let got = UdpDataStream::from_be_bytes(data).unwrap();
+        let want = UdpDataStream {
+            api_version: 0,
+            port: 0,
+            id: 0,
+            os: "".to_owned(),
+            user_name: "".to_owned(),
         };
         assert_eq!(got, want);
     }
@@ -1057,6 +1146,8 @@ mod tests {
         let handler = thread::spawn(move || {
             send_info(
                 port,
+                whoami::realname(),
+                rand::rng().random(),
                 is_running_cloned,
                 SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
                 broadcast_addr,
@@ -1065,7 +1156,7 @@ mod tests {
         });
         // wait a while to start above thread
         thread::sleep(Duration::from_millis(200));
-        let info = recv_info(broadcast_addr, Duration::from_secs(1)).unwrap();
+        let info = recv_info(broadcast_addr, Duration::from_secs(1), &HashSet::new()).unwrap();
         // stop the thread
         *is_running.lock().unwrap() = false;
         handler.join().unwrap();

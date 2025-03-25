@@ -607,7 +607,64 @@ pub enum RecvType {
 
 pub trait RecvDataWithoutPd: BufRead {
     fn recv_data_without_pd(&mut self) -> io::Result<RecvType> {
-        todo!()
+        // TODO: use `Vec<u8>` with capacity to reduce stack uses.
+        let mut buf = [0; 5 * 1024];
+        let max_buf_size = buf.len();
+        let mut prefix = [0; 4];
+        self.read_exact(&mut prefix)?;
+        match &prefix {
+            // receiving a file
+            b"fff:" => {
+                // TODO: create a separate function.
+                let mut file_name_len_buf = [0; 2];
+                self.read_exact(&mut file_name_len_buf)?;
+                let mut file_name_len = u16::from_be_bytes(file_name_len_buf) as usize;
+                let mut file_name = String::with_capacity(file_name_len);
+                loop {
+                    let n = self.read(&mut buf[0..std::cmp::min(file_name_len, max_buf_size)])?;
+                    if n == 0 {
+                        break;
+                    }
+                    file_name_len -= n;
+                    file_name.push_str(unsafe { std::str::from_utf8_unchecked(&buf[0..n]) });
+                }
+                self.read_exact(&mut buf[0..8])?;
+                // FIXME: sender can send very large file
+                // prevent very large file to store on disk.
+                let mut file_size = u64::from_be_bytes([
+                    buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+                ]) as usize;
+                println!("File receiving of size: {} mb", file_size / (1024 * 1024));
+                // BUG: sender can send custom path that hack the system.
+                // Example: `~/.bashrc`
+                let file = fs::File::create_new(&file_name)?;
+                let mut writer = BufWriter::new(file);
+                loop {
+                    let n = self.read(&mut buf[0..std::cmp::min(file_size, max_buf_size)])?;
+                    if n == 0 {
+                        break;
+                    }
+                    writer.write_all(&buf[0..n])?;
+                    file_size -= n;
+                }
+                self.read_exact(&mut buf[0..2])?;
+                match &buf[0..2] {
+                    // end of file
+                    b"\xEE\xFF" => {
+                        return Ok(RecvType::File(file_name));
+                    }
+                    //TODO: something that should not happen.
+                    // delete the received file.
+                    _ => todo!(),
+                }
+            }
+            // indicate that the sender does not send anything.
+            b":00:" => Ok(RecvType::Eof),
+            _ => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Invalid Data Received",
+            )),
+        }
     }
 }
 
@@ -618,7 +675,7 @@ pub enum SendData<T> {
     /// fff:\xXX\xXX<file name><64 bit size of file><...file...>\xEE\xFF
     ///     ^------^ => 16 bit length of file name
     File(T),
-    Msg(String),
+    /// :00:
     Eof,
 }
 

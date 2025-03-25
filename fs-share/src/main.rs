@@ -69,13 +69,15 @@ fn handle_half_duplex_receiver(_stream: TcpStream) -> io::Result<()> {
 fn handle_full_duplex_without_pd(stream1: TcpStream, stream2: TcpStream) -> io::Result<()> {
     let mut receiver = BufReader::new(stream1);
     let sender = BufWriter::new(stream2);
-    let files = Vec::<PathBuf>::new();
+    let files = std::env::args().skip(2).collect();
     let handler = thread::spawn(move || send_files_without_progress(sender, files));
     loop {
         match receiver.recv_data_without_pd() {
             Ok(RecvType::Eof) => break,
+            Ok(RecvType::File(name)) => {
+                println!("File Received: {}", name);
+            }
             Err(err) => return Err(err),
-            _ => {}
         }
     }
     if let Err(err) = handler.join().unwrap() {

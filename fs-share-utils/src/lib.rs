@@ -2,22 +2,16 @@ mod addr;
 mod client;
 mod utils;
 
-use argon2::Argon2;
 use indicatif::{ProgressBar, ProgressState, ProgressStyle};
 
 pub use addr::get_sender_addr;
-use rand::{random, Rng};
-use serde::ser::SerializeStruct;
+use rand::Rng;
 use std::collections::HashSet;
-use std::ffi::OsString;
 use std::fmt::{self, Write as FWrite};
 use std::io::{stdin, BufRead, BufWriter, Cursor, Read};
 use std::net::{IpAddr, Ipv6Addr, SocketAddr, SocketAddrV6, TcpListener, ToSocketAddrs, UdpSocket};
-use std::os::unix::ffi::OsStrExt;
-use std::path::PathBuf;
-use std::sync::{mpsc, Arc, Mutex};
-use std::thread::Thread;
-use std::time::{self, Duration};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::{cmp, fs, thread, usize};
 use std::{
     fs::File,
@@ -590,7 +584,7 @@ pub enum RecvType {
 }
 
 pub trait RecvDataWithoutPd: BufRead {
-    fn recv_data_without_pd(&mut self) -> io::Result<RecvType> {
+    fn recv_data_without_pd<W: io::Write>(&mut self, stdout: &mut W) -> io::Result<RecvType> {
         // TODO: use `Vec<u8>` with capacity to reduce stack uses.
         let mut buf = [0; 5 * 1024];
         let max_buf_size = buf.len();
@@ -601,6 +595,7 @@ pub trait RecvDataWithoutPd: BufRead {
             b"fff:" => {
                 // TODO: create a separate function.
                 let mut file_name_len_buf = [0; 2];
+                writeln!(stdout, "File Receiving")?;
                 self.read_exact(&mut file_name_len_buf)?;
                 let mut file_name_len = u16::from_be_bytes(file_name_len_buf) as usize;
                 let mut file_name = String::with_capacity(file_name_len);
@@ -612,13 +607,18 @@ pub trait RecvDataWithoutPd: BufRead {
                     file_name_len -= n;
                     file_name.push_str(unsafe { std::str::from_utf8_unchecked(&buf[0..n]) });
                 }
+                writeln!(stdout, "Name: {}", file_name.green())?;
                 self.read_exact(&mut buf[0..8])?;
                 // FIXME: sender can send very large file
                 // prevent very large file to store on disk.
                 let mut file_size = u64::from_be_bytes([
                     buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
                 ]) as usize;
-                println!("File receiving of size: {} mb", file_size / (1024 * 1024));
+                writeln!(
+                    stdout,
+                    "File Size: {} MB",
+                    (file_size / (1024 * 1024)).to_string().green()
+                )?;
                 // BUG: sender can send custom path that hack the system.
                 // Example: `~/.bashrc`
                 let file = fs::File::create_new(&file_name)?;
@@ -635,6 +635,7 @@ pub trait RecvDataWithoutPd: BufRead {
                 match &buf[0..2] {
                     // end of file
                     b"\xEE\xFF" => {
+                        writeln!(stdout, "----{}----", "file receive success".green())?;
                         return Ok(RecvType::File(file_name));
                     }
                     //TODO: something that should not happen.
@@ -665,7 +666,11 @@ pub enum SendData<T> {
 }
 
 impl<T: AsRef<Path>> SendData<T> {
-    pub fn send_without_progress<W: io::Write>(self, stream: &mut BufWriter<W>) -> io::Result<()> {
+    pub fn send_without_progress<W1: io::Write, W: io::Write>(
+        self,
+        stdout: &mut W1,
+        stream: &mut BufWriter<W>,
+    ) -> io::Result<()> {
         match self {
             Self::File(path) => {
                 let file_name = path
@@ -682,27 +687,20 @@ impl<T: AsRef<Path>> SendData<T> {
                 stream.write_all(&(file_name.len() as u16).to_be_bytes())?; // sending 16 bit length of file
                 stream.write_all(file_name.as_bytes())?; // sending file name
                 stream.write_all(&file_len.to_be_bytes())?; // sending 64 bit length of file
+                writeln!(stdout, "Sending File")?;
+                writeln!(stdout, "Name: {}", path.as_ref().to_str().unwrap().green())?;
+                writeln!(
+                    stdout,
+                    "Size: {} MB",
+                    (file_len / (1024 * 1024)).to_string().green()
+                )?;
                 io::copy(&mut reader, stream)?; // sending the file
                 stream.write_all(b"\xEE\xFF")?; // End of file
+                writeln!(stdout, "{}", "File Send Success".green())?;
             }
             Self::Eof => stream.write_all(b":00:")?,
-            _ => {}
         }
         Ok(())
-    }
-}
-
-pub struct SenderFs<R: io::Write> {
-    stream: BufWriter<R>,
-}
-
-pub struct ReceiverFs<W: io::Read> {
-    stream: BufReader<W>,
-}
-
-impl<R: io::Read> ReceiverFs<R> {
-    pub fn recv(&mut self) -> io::Result<()> {
-        todo!()
     }
 }
 
@@ -824,6 +822,13 @@ impl ClientType {
                     writeln!(stdout, "Name: {}", info.user_name.bold().green())?;
                     writeln!(stdout, "Unique ID: {}", info.id.to_string().bold().green())?;
                     writeln!(stdout, "IP: {}", info.addr.ip().to_string().bold().green())?;
+                    writeln!(
+                        stdout,
+                        "IP Version: {}",
+                        if info.addr.is_ipv4() { "IPv4" } else { "IPv6" }
+                            .bold()
+                            .green()
+                    )?;
                     writeln!(stdout, "Operating System: {}", info.os.bold().green())?;
                     writeln!(
                         stdout,
@@ -929,6 +934,17 @@ impl ClientType {
                                 stdout,
                                 "IP: {}",
                                 stream.peer_addr().unwrap().ip().to_string().bold().green()
+                            )?;
+                            writeln!(
+                                stdout,
+                                "IP Version: {}",
+                                if stream.peer_addr().unwrap().is_ipv4() {
+                                    "IPv4"
+                                } else {
+                                    "IPv6"
+                                }
+                                .bold()
+                                .green()
                             )?;
                             writeln!(stdout, "Operating System: {}", info.os.bold().green())?;
                             writeln!(

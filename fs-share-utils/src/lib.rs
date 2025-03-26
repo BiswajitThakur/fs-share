@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread::Thread;
 use std::time::{self, Duration};
-use std::{cmp, fs, thread};
+use std::{cmp, fs, thread, usize};
 use std::{
     fs::File,
     io::{self, BufReader, Write},
@@ -799,6 +799,7 @@ impl ClientType {
         stdout: &mut W,
         name: Option<&str>,
     ) -> io::Result<TransmissionMode<TcpStream>> {
+        let mut buf = [0; 3];
         let name = name.map(|v| v.to_owned()).unwrap_or(whoami::realname());
         writeln!(stdout, "{}", "--------Your--------".bold().italic().red())?;
         writeln!(stdout, "Name: {}", name.bold().red())?;
@@ -867,11 +868,20 @@ impl ClientType {
                         "{}",
                         "Waiting for receiver conformation".bold().yellow()
                     )?;
-                    if let Err(err) = verify_from_sender(&mut stream) {
-                        //block_ips.insert(info.addr);
-                        eprintln!("{}", err);
-                        continue;
-                    };
+                    stream.read_exact(&mut buf)?;
+                    match &buf {
+                        b"yes" => {
+                            writeln!(stdout, "{}", "connection success".bold().green())?;
+                        }
+                        b"noo" => {
+                            writeln!(stdout, "{}", "connection rejected".bold().red())?;
+                            std::process::exit(1);
+                        }
+                        _ => {
+                            writeln!(stdout, "{}", "something went wrong".bold().red())?;
+                            std::process::exit(1);
+                        }
+                    }
                     return sender_transmission_mode(stream);
                 }
             }
@@ -890,24 +900,70 @@ impl ClientType {
                         addr.broadcast_addr,
                     )
                 });
-                let mut block_addrs = HashSet::new();
-                let mut buf = [0; 2048];
+                let mut block_ips = HashSet::new();
                 for stream in listener.incoming() {
                     let mut stream = stream?;
-                    if block_addrs.contains(&stream.peer_addr().unwrap().ip()) {
+                    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+                    if block_ips.contains(&stream.peer_addr().unwrap().ip()) {
+                        let _ = stream.write_all(b"noo");
                         let _ = stream.shutdown(std::net::Shutdown::Both);
                         continue;
                     }
-
-                    if let Err(err) = verify_from_receiver(&mut stream, stdout) {
-                        block_addrs.insert(stream.peer_addr().unwrap().ip());
-                        eprintln!("{}", err);
-                        let _ = stream.shutdown(std::net::Shutdown::Both);
-                        continue;
+                    match read_data_stream(&mut stream) {
+                        Err(err) => {
+                            writeln!(stdout, "{}", err)?;
+                            continue;
+                        }
+                        Ok(None) => {
+                            continue;
+                        }
+                        Ok(Some(info)) => {
+                            writeln!(
+                                stdout,
+                                "{}",
+                                "---------Sender---------".bold().italic().cyan()
+                            )?;
+                            writeln!(stdout, "Name: {}", info.user_name.bold().green())?;
+                            writeln!(stdout, "Unique ID: {}", info.id.to_string().bold().green())?;
+                            writeln!(
+                                stdout,
+                                "IP: {}",
+                                stream.peer_addr().unwrap().ip().to_string().bold().green()
+                            )?;
+                            writeln!(stdout, "Operating System: {}", info.os.bold().green())?;
+                            writeln!(
+                                stdout,
+                                "{}",
+                                "--------------------------".bold().italic().cyan()
+                            )?;
+                            write!(
+                                stdout,
+                                "Do you want to connect ({}/{}): ",
+                                "y".green(),
+                                "n".red()
+                            )?;
+                            stdout.flush()?;
+                            match stdin().lines().next().unwrap()?.to_lowercase().trim() {
+                                "y" | "yes" => {
+                                    stream.write_all(b"yes")?;
+                                }
+                                "n" | "no" => {
+                                    let _ = stream.write_all(b"noo");
+                                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                                    block_ips.insert(stream.peer_addr().unwrap().ip());
+                                    continue;
+                                }
+                                _ => {
+                                    let _ = stream.write_all(b"noo");
+                                    let _ = stream.shutdown(std::net::Shutdown::Both);
+                                    continue;
+                                }
+                            }
+                        }
                     }
                     close_upd_thread(is_running.clone());
-                    println!("Sender Addr: {}", stream.peer_addr().unwrap());
                     handler.join().unwrap().unwrap();
+                    stream.set_read_timeout(None)?;
                     return receiver_transmission_mode(stream);
                 }
                 unreachable!()
@@ -918,6 +974,68 @@ impl ClientType {
 
 fn read_data_stream<R: io::Read>(r: &mut R) -> io::Result<Option<UdpDataStream>> {
     let mut buf = [0; 1024];
+    let max_buf_size = buf.len();
+    r.read_exact(&mut buf[0..10])?; // reading prefix
+    match &buf[0..10] {
+        b":fs-share:" => {}
+        _ => {
+            return Ok(None);
+        }
+    }
+    r.read_exact(&mut buf[0..2])?; // reading api version
+    let api_version = u16::from_be_bytes([buf[0], buf[1]]);
+    if api_version > APT_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Version Not Match. You are using lower version. please update then retry.",
+        ));
+    } else if api_version < APT_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "Version Not Match. Sender uses lower version.",
+        ));
+    }
+    r.read_exact(&mut buf[0..2])?; // reading port
+    r.read_exact(&mut buf[0..8])?; // reading unique id
+    let id = u64::from_be_bytes([
+        buf[0], buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7],
+    ]);
+    r.read_exact(&mut buf[0..2])?;
+    // TODO: stop reading the name of the os, if its too big.
+    let mut os_name_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+    let mut os = String::with_capacity(os_name_len);
+    loop {
+        let n = r.read(&mut buf[0..std::cmp::min(max_buf_size, os_name_len)])?;
+        if n == 0 {
+            break;
+        }
+        os.push_str(unsafe { std::str::from_utf8_unchecked(&buf[0..n]) });
+        if n == os_name_len {
+            break;
+        }
+        os_name_len -= n;
+    }
+    r.read_exact(&mut buf[0..2])?;
+    let mut name_len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+    let mut name = String::with_capacity(name_len);
+    loop {
+        let n = r.read(&mut buf[0..std::cmp::min(max_buf_size, name_len)])?;
+        if n == 0 {
+            break;
+        }
+        name.push_str(unsafe { std::str::from_utf8_unchecked(&buf[0..n]) });
+        if n == name_len {
+            break;
+        }
+        name_len -= n;
+    }
+    Ok(Some(UdpDataStream {
+        api_version,
+        port: 0,
+        id,
+        os,
+        user_name: name,
+    }))
 }
 
 fn verify_from_sender(_stream: &mut TcpStream) -> io::Result<()> {

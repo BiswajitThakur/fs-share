@@ -1,6 +1,6 @@
 use std::{
     io::{self, stdout, BufReader, BufWriter},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
+    net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     thread,
 };
@@ -19,36 +19,25 @@ fn main() -> std::io::Result<()> {
     match option.as_str() {
         "send" | "--send" => {
             let client = ClientType::sender()
-                /*
-                .set_broadcast_addr(SocketAddr::new(
-                    IpAddr::V6(Ipv6Addr::LOCALHOST),
-                    BROADCAST_PORT,
-                ))*/
                 .set_broadcast_addr(SocketAddr::new(
                     IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
                     BROADCAST_PORT,
                 ))
                 .build();
-            let mode = client.connect(&mut stdout, None)?;
-            handle_connection_sender_without_pd(&mut stdout, mode)?;
+            let sender = client.connect(&mut stdout, None)?;
+            handle_connection_sender_without_pd(&mut stdout, sender)?;
         }
         "receive" | "--receive" => {
             let client = ClientType::receiver()
-                //.set_tcp_listener_addr(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
                 .set_tcp_listener_addr("[::]:0".parse().unwrap())
-                //.set_udp_socket_addr(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
                 .set_udp_socket_addr("[::]:0".parse().unwrap())
-                /* .set_broadcast_addr(SocketAddr::new(
-                    IpAddr::V6(Ipv6Addr::LOCALHOST),
-                    BROADCAST_PORT,
-                ))*/
                 .set_broadcast_addr(SocketAddr::new(
                     IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)),
                     BROADCAST_PORT,
                 ))
                 .build();
-            let mode = client.connect(&mut stdout, Some("eagle1234"))?;
-            handle_connection_receiver(&mut stdout, mode)?;
+            let receiver = client.connect(&mut stdout, Some("eagle1234"))?;
+            handle_connection_receiver(&mut stdout, receiver)?;
         }
         _ => {}
     }

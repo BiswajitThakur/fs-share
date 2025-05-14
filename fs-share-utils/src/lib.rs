@@ -665,6 +665,17 @@ pub enum SendData<T> {
     Eof,
 }
 
+fn print_file_size<W: io::Write>(size: u64, stdout: &mut W) -> io::Result<()> {
+    // TODO: print 2 decimal places.
+    let (a, b) = match size {
+        s @ 0..1024 => (s, "B"),
+        s if s < 1024 => (s / 1024, "KB"),
+        s if s < 1024 * 1024 => (s / (1024 * 1024), "MB"),
+        s => (s / (1024 * 1024 * 1024), "GB"),
+    };
+    writeln!(stdout, "size: {} {}", a, b)
+}
+
 impl<T: AsRef<Path>> SendData<T> {
     pub fn send_without_progress<W1: io::Write, W: io::Write>(
         self,
@@ -687,16 +698,12 @@ impl<T: AsRef<Path>> SendData<T> {
                 stream.write_all(&(file_name.len() as u16).to_be_bytes())?; // sending 16 bit length of file
                 stream.write_all(file_name.as_bytes())?; // sending file name
                 stream.write_all(&file_len.to_be_bytes())?; // sending 64 bit length of file
-                writeln!(stdout, "Sending File")?;
+                writeln!(stdout, "Sending File --->>>>>>")?;
                 writeln!(stdout, "Name: {}", path.as_ref().to_str().unwrap().green())?;
-                writeln!(
-                    stdout,
-                    "Size: {} MB",
-                    (file_len / (1024 * 1024)).to_string().green()
-                )?;
+                print_file_size(file_len, stdout)?;
                 io::copy(&mut reader, stream)?; // sending the file
                 stream.write_all(b"\xEE\xFF")?; // End of file
-                writeln!(stdout, "{}", "File Send Success".green())?;
+                writeln!(stdout, "{}", "-----File Send Success-----".green())?;
             }
             Self::Eof => stream.write_all(b":00:")?,
         }
@@ -851,6 +858,10 @@ impl ClientType {
                         _ => {
                             continue;
                         }
+                    }
+                    if info.api_version != APT_VERSION {
+                        writeln!(stdout, "{}", "Version Not Match".bold().red())?;
+                        std::process::exit(1);
                     }
                     writeln!(
                         stdout,

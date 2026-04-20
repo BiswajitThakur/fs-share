@@ -1,0 +1,19 @@
+[package]
+name = "fs-share"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fs-share-utils = { version = "1.0.0", path = "../fs-share-utils" }
+indicatif = "0.17.9"
+colored = "2"
+anyhow = { workspace = true }
+clap = { version = "4.5.20", features = [
+    "derive",
+    "cargo",
+    "wrap_help",
+    "unicode",
+    "string",
+    "unstable-styles",
+] }
+

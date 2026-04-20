@@ -1,0 +1,12 @@
+[package]
+name = "fs-share-utils"
+version = "1.0.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+

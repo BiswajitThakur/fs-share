@@ -77,7 +77,7 @@ jobs:
         if: matrix.target == 'aarch64-linux-android'
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r27d
+          ndk-version: r26d
 
       - name: Set Android linker
         if: matrix.target == 'aarch64-linux-android'

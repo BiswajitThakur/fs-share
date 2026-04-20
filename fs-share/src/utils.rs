@@ -12,7 +12,7 @@ pub fn select_ip() -> Option<IpAddr> {
     select_ip_impl()
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "android")))]
 pub fn select_ip_impl() -> Option<IpAddr> {
     use fs_share_utils::ip::IterIpAddr;
     use std::io::Write;
@@ -31,7 +31,7 @@ pub fn select_ip_impl() -> Option<IpAddr> {
     ips.get(index - 1).map(|(_, ip)| *ip)
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_os = "android"))]
 pub fn select_ip_impl() -> Option<IpAddr> {
     None
 }

@@ -27,8 +27,7 @@ jobs:
             git cliff -o CHANGELOG.md
           fi
 
-      - name: Create GitHub Release
-        uses: taiki-e/create-gh-release-action@v1
+      - uses: taiki-e/create-gh-release-action@v1
         with:
           changelog: CHANGELOG.md
 
@@ -73,7 +72,7 @@ jobs:
       - name: Add target
         run: rustup target add ${{ matrix.target }}
 
-      # Install Android NDK (only for android target)
+      # Android NDK (required)
       - name: Install Android NDK
         if: matrix.target == 'aarch64-linux-android'
         uses: nttld/setup-ndk@v1
@@ -85,11 +84,12 @@ jobs:
         run: |
           echo "CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang" >> $GITHUB_ENV
 
-      # Optional: cross for Linux ARM
-      - name: Install cross
+      # Linux ARM cross compile
+      - name: Install cross (Linux ARM)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: cargo install cross
 
+      # Build step (important override)
       - name: Build
         run: |
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
@@ -99,26 +99,10 @@ jobs:
           fi
         shell: bash
 
-      - name: Rename binary
-        run: |
-          BIN="${{ env.BINARY_NAME }}"
-          TARGET="${{ matrix.target }}"
-
-          EXT=""
-          if [[ "$TARGET" == *windows* ]]; then
-            EXT=".exe"
-          fi
-
-          OUT="target/${TARGET}/release/${BIN}${EXT}"
-          FINAL="${BIN}-${GITHUB_REF_NAME}-${TARGET}${EXT}"
-
-          cp "$OUT" "$FINAL"
-          echo "ASSET=$FINAL" >> $GITHUB_ENV
-        shell: bash
-
-      - name: Upload to Release
-        uses: softprops/action-gh-release@v2
+      # Upload binary
+      - uses: taiki-e/upload-rust-binary-action@v1
         with:
-          files: ${{ env.ASSET }}
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          bin: ${{ env.BINARY_NAME }}
+          target: ${{ matrix.target }}
+          tar: unix
+          zip: windows

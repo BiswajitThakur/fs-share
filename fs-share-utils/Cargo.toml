@@ -2,6 +2,9 @@
 name = "fs-share-utils"
 version = "1.0.0"
 edition = "2024"
+description = "A utility library for file sharing."
+repository = "https://github.com/BiswajitThakur/fs-share.git"
+homepage = "https://github.com/BiswajitThakur/fs-share.git"
 
 [dependencies]
 anyhow = { workspace = true }

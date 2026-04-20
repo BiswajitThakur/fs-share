@@ -1,7 +1,11 @@
 [package]
 name = "fs-share"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "A cross-platform file-sharing CLI application"
+homepage = "https://github.com/BiswajitThakur/fs-share.git"
+keywords = ["file", "share", "tcu", "udp", "cli"]
+repository = "https://github.com/BiswajitThakur/fs-share.git"
 
 [dependencies]
 fs-share-utils = { version = "1.0.0", path = "../fs-share-utils" }

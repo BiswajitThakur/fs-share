@@ -2,14 +2,23 @@
 name = "fs-share-utils"
 version = "1.0.0"
 edition = "2024"
-description = "A utility library for file sharing."
-repository = "https://github.com/BiswajitThakur/fs-share.git"
-homepage = "https://github.com/BiswajitThakur/fs-share.git"
+
+description = "Core utilities for fs-share: broadcasting, networking, and file transfer primitives."
+license = "MIT"
+
+repository = "https://github.com/BiswajitThakur/fs-share"
+homepage = "https://github.com/BiswajitThakur/fs-share"
+documentation = "https://docs.rs/fs-share-utils"
+readme = "README.md"
+
+keywords = ["file-transfer", "networking", "udp", "tcp", "cli"]
+categories = ["network-programming", "command-line-utilities"]
+
+authors = ["Biswajit Thakur"]
 
 [dependencies]
 anyhow = { workspace = true }
 
+# Unix-only networking (excluding Android due to missing getifaddrs)
 [target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
 libc = "0.2"
-
-

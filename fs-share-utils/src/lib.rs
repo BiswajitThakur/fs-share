@@ -9,7 +9,7 @@
 //!
 //! ## Modules
 //!
-//! ### `broadcast`
+//! ### [`broadcast`]
 //! Provides UDP broadcast utilities for peer discovery.
 //! Used to announce and detect available senders/receivers on the network.
 //!

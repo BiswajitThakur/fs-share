@@ -7,7 +7,7 @@ use std::{
 
 use fs_share_utils::{broadcast::sender::Broadcaster, pb::ProgressBar, receiver::App};
 
-pub struct ReceiverAppV1<T, U> {
+pub struct ReceiverApp<T, U> {
     pub broadcast_addr: SocketAddr,
     pub download_dir: PathBuf,
     pub disable_broadcaster: bool,
@@ -15,7 +15,7 @@ pub struct ReceiverAppV1<T, U> {
     pub pb: Box<dyn Fn(u64) -> Box<dyn ProgressBar>>,
 }
 
-impl<T: Read + Write, U: Read + Write> App for ReceiverAppV1<T, U> {
+impl<T: Read + Write, U: Read + Write> App for ReceiverApp<T, U> {
     type Stream = T;
     type UpgradeStream = U;
     fn prefix(&self) -> &str {
@@ -30,10 +30,10 @@ impl<T: Read + Write, U: Read + Write> App for ReceiverAppV1<T, U> {
     fn disable_broadcaster(&self) -> bool {
         self.disable_broadcaster
     }
-    fn get_upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
+    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
         &*self.upgrade_stream
     }
-    fn create_pb(&self, n: u64) -> Box<dyn ProgressBar> {
+    fn create_progress_bar(&self, n: u64) -> Box<dyn ProgressBar> {
         (self.pb)(n)
     }
     fn auth(&self, _stream: &mut Self::Stream) -> io::Result<bool> {

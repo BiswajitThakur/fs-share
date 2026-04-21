@@ -1,3 +1,34 @@
+//! # UDP Broadcaster
+//!
+//! This module provides a UDP-based broadcaster used for service discovery
+//! in local networks.
+//!
+//! It periodically sends structured packets to a broadcast address,
+//! allowing receivers to detect available services.
+//!
+//! ## Use Case
+//!
+//! Used in `fs-share` to announce receiver availability so that senders
+//! can automatically discover peers on the same LAN.
+//!
+//! ## Packet Format
+//!
+//! Each broadcast packet:
+//!
+//! ```text
+//! [header][payload]
+//! ```
+//!
+//! Payload consists of multiple fields:
+//!
+//! ```text
+//! :<len:u16><bytes>
+//! :<len:u16><bytes>
+//! ...
+//! ```
+//!
+//! This matches the format used by [`crate::broadcast::receiver::PayloadReader`] on the receiver side.
+//!
 use std::{
     net::{SocketAddr, UdpSocket},
     sync::{
@@ -8,19 +39,44 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
+
+/// UDP broadcaster.
+///
 pub struct Broadcaster {
+    /// Packet header used to identify valid messages
     header: Vec<u8>,
+
+    /// Encoded payload (structured fields)
     payload: Vec<u8>,
+
+    /// Local address to bind UDP socket
     bind_addr: SocketAddr,
+
+    /// Target broadcast address
     target_addr: SocketAddr,
+
+    /// Optional dynamic interval (milliseconds)
     interval_ms: Option<Arc<AtomicU64>>,
 }
 
 impl Broadcaster {
+    /// Create a new builder for configuring [`Broadcaster`]
     pub fn builder() -> BroadcasterBuilder {
         BroadcasterBuilder::default()
     }
 
+    /// Start broadcasting in a background thread.
+    ///
+    /// Returns:
+    /// - Stop function
+    /// - Thread handle
+    ///
+    /// ## Behavior
+    ///
+    /// - Sends packets periodically
+    /// - Stops when stop function is called
+    /// - Logs errors to stderr
     pub fn start(self) -> (impl FnOnce(), std::thread::JoinHandle<()>) {
         let (stop_tx, stop_rx) = mpsc::channel();
 
@@ -36,7 +92,12 @@ impl Broadcaster {
 
         (stop, handle)
     }
+
+    /// Internal run loop.
+    ///
+    /// Builds the packet and continuously sends it until stopped.
     fn run(self, stop_rx: Receiver<()>) -> anyhow::Result<()> {
+        // Build final packet = header + payload
         let mut packet = Vec::with_capacity(self.header.len() + self.payload.len());
         packet.extend_from_slice(&self.header);
         packet.extend_from_slice(&self.payload);
@@ -50,16 +111,18 @@ impl Broadcaster {
 
         loop {
             match stop_rx.recv_timeout(self.get_interval()) {
-                Ok(_) => {
-                    break;
-                }
+                // Stop signal received
+                Ok(_) => break,
+
+                // Timeout → send packet
                 Err(mpsc::RecvTimeoutError::Timeout) => {
                     socket.send_to(&packet, self.target_addr).with_context(|| {
                         format!("Failed to send broadcast packet to {}", self.target_addr)
                     })?;
                 }
+
+                // Channel disconnected → also stop
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    // sender dropped → treat as stop signal
                     println!("Stop channel disconnected. Stopping broadcaster.");
                     break;
                 }
@@ -68,6 +131,11 @@ impl Broadcaster {
 
         Ok(())
     }
+
+    /// Get current broadcast interval.
+    ///
+    /// If dynamic interval is provided, reads from `AtomicU64`,
+    /// otherwise defaults to 300 ms.
     fn get_interval(&self) -> Duration {
         Duration::from_millis(
             self.interval_ms
@@ -80,8 +148,14 @@ impl Broadcaster {
 
 use std::net::{IpAddr, Ipv4Addr};
 
-use anyhow::Context;
-
+/// Builder for [`Broadcaster`]
+///
+/// Provides configuration for:
+/// - Header
+/// - Payload fields
+/// - Bind address
+/// - Broadcast target address
+/// - Interval
 pub struct BroadcasterBuilder {
     header: Vec<u8>,
     payload: Vec<u8>,
@@ -103,11 +177,22 @@ impl Default for BroadcasterBuilder {
 }
 
 impl BroadcasterBuilder {
+    /// Set packet header
     pub fn header<T: Into<Vec<u8>>>(mut self, header: T) -> Self {
         self.header = header.into();
         self
     }
 
+    /// Add a payload field.
+    ///
+    /// Encoded as:
+    /// ```text
+    /// :<len:u16><bytes>
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if field size exceeds `u16::MAX`
     pub fn add_field<T: AsRef<[u8]>>(mut self, data: T) -> Self {
         let bytes = data.as_ref();
 
@@ -121,21 +206,25 @@ impl BroadcasterBuilder {
         self
     }
 
+    /// Set dynamic broadcast interval (milliseconds)
     pub fn interval(mut self, interval: Arc<AtomicU64>) -> Self {
         self.interval_ms = Some(interval);
         self
     }
 
+    /// Set UDP bind address
     pub fn bind_addr(mut self, addr: SocketAddr) -> Self {
         self.bind_addr = addr;
         self
     }
 
+    /// Set broadcast target address
     pub fn target_addr(mut self, addr: SocketAddr) -> Self {
         self.target_addr = addr;
         self
     }
 
+    /// Build [`Broadcaster`]
     pub fn build(self) -> Broadcaster {
         Broadcaster {
             header: self.header,

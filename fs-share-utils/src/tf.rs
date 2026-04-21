@@ -1,3 +1,14 @@
+//! # File Transfer (tf)
+//!
+//! Handles sending and receiving files over upgraded streams.
+//!
+//! ## Protocol
+//!
+//! Header format:
+//! ```text
+//! :fff: | name_len(u16) | file_size(u64) | filename | file_bytes...
+//! ```
+
 use std::io::Read;
 use std::{
     fs::File,
@@ -37,7 +48,7 @@ pub fn sender_send_file<A: SenderApp + ?Sized>(
     let metadata = file.metadata()?;
     let total = metadata.len();
 
-    let pb = app.create_pb(total);
+    let pb = app.create_progress_bar(total);
 
     println!("Sending file: {}, size: {} bytes", path.display(), total);
     stream.write_all(b":fff:")?;
@@ -82,7 +93,7 @@ pub fn receiver_send_file<A: ReceiverApp + ?Sized>(
     let metadata = file.metadata()?;
     let total = metadata.len();
 
-    let pb = app.create_pb(total);
+    let pb = app.create_progress_bar(total);
 
     println!("Sending file: {}, size: {} bytes", path.display(), total);
     stream.write_all(b":fff:")?;
@@ -140,7 +151,7 @@ pub fn sender_receive_file<A: SenderApp + ?Sized>(
 
     let mut file = File::create(&save_path)?;
 
-    let pb = app.create_pb(total);
+    let pb = app.create_progress_bar(total);
 
     println!("Receiving file: {}, size: {} bytes", file_name, total);
 
@@ -200,7 +211,7 @@ pub fn receiver_receive_file<A: ReceiverApp + ?Sized>(
 
     let mut file = File::create(&save_path)?;
 
-    let pb = app.create_pb(total);
+    let pb = app.create_progress_bar(total);
 
     println!("Receiving file: {}, size: {} bytes", file_name, total);
 
@@ -227,3 +238,4 @@ pub fn receiver_receive_file<A: ReceiverApp + ?Sized>(
 
     Ok(save_path)
 }
+

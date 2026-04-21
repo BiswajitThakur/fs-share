@@ -114,10 +114,10 @@ impl<T: Read + Write, U: Read + Write> App for SenderAppV1<T, U> {
     fn download_dir<'a>(&'a self) -> Cow<'a, Path> {
         Cow::Borrowed(&self.download_dir)
     }
-    fn get_upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
+    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
         &*self.upgrade_stream
     }
-    fn create_pb(&self, n: u64) -> Box<dyn ProgressBar> {
+    fn create_progress_bar(&self, n: u64) -> Box<dyn ProgressBar> {
         (self.pb)(n)
     }
 

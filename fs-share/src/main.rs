@@ -2,12 +2,12 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
 
 use anyhow::Context;
 use clap::Parser;
-use fs_share_utils::{receiver::run as run_receiver_app, sender::run as run_sender_app};
+use fs_share_utils::{receiver::run_v1 as run_receiver_app, sender::run_v1 as run_sender_app};
 
 use crate::{
     cli::Mode,
     pb::{my_pb, no_pb},
-    receiver::ReceiverAppV1,
+    receiver::ReceiverApp,
     sender::{ReceiverData, SenderAppV1},
     utils::{create_tcp_listener, receiver_upgrade_stream, select_ip, sender_upgrade_stream},
 };
@@ -63,7 +63,7 @@ fn main() -> anyhow::Result<()> {
                     SocketAddr::new(ip, 0)
                 }
             };
-            let mut app = ReceiverAppV1 {
+            let mut app = ReceiverApp {
                 broadcast_addr: SocketAddr::V4(SocketAddrV4::new(
                     Ipv4Addr::BROADCAST,
                     broadcast_port,

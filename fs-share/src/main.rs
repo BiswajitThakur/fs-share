@@ -1,8 +1,7 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
 
-use anyhow::Context;
 use clap::Parser;
-use fs_share_utils::{receiver::run_v1 as run_receiver_app, sender::run_v1 as run_sender_app};
+use fs_share_utils::{receiver::run_v1_0 as run_receiver_app, sender::run_v1_0 as run_sender_app};
 
 use crate::{
     cli::Mode,
@@ -43,10 +42,7 @@ fn main() -> anyhow::Result<()> {
                 app.pb = Box::new(no_pb);
             }
 
-            run_sender_app::<_, _, _, ReceiverData>(app, args.iter(), |_app, addr| {
-                TcpStream::connect(addr)
-                    .with_context(|| format!("Failed to connect to server at {}", addr))
-            })?;
+            run_sender_app::<_, _, _, ReceiverData>(app, args.iter(), TcpStream::connect)?;
         }
         Mode::Receive {
             tcp_listener_addr,

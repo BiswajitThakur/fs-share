@@ -58,17 +58,37 @@ pub trait App {
     fn disable_broadcaster(&self) -> bool {
         false
     }
-
+    /// Pre-process an incoming connection.
+    ///
+    /// This method is called immediately after a connection is accepted,
+    /// and before authentication or stream upgrade.
+    ///
+    /// Return:
+    /// - `Ok(true)`  → continue processing (proceed to authentication)
+    /// - `Ok(false)` → reject this connection and wait for the next one
+    /// - `Err(_)`    → treat as a failure and skip this connection
+    fn preprocess_connection(&self, stream: &mut Self::Stream) -> anyhow::Result<bool> {
+        let _ = stream;
+        Ok(true)
+    }
     /// Authenticate incoming connection
     ///
     /// Return `true` to accept connection.
-    fn auth(&self, stream: &mut Self::Stream) -> io::Result<bool> {
+    fn auth(&self, stream: &mut Self::Stream) -> anyhow::Result<bool> {
         let _ = stream;
         Ok(true)
     }
 
     /// Provide stream upgrade function (e.g., handshake, encryption)
-    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream>;
+    fn upgrade_stream(&self, stream: Self::Stream) -> anyhow::Result<Self::UpgradeStream>;
+
+    /// Post-process upgraded connection
+    ///
+    /// Called after stream upgrade (e.g., encryption established).
+    fn postprocess_connection(&self, stream: &mut Self::UpgradeStream) -> anyhow::Result<()> {
+        let _ = stream;
+        Ok(())
+    }
 
     /// Create progress bar
     fn create_progress_bar(&self, total: u64) -> Box<dyn ProgressBar>;
@@ -90,7 +110,7 @@ pub trait App {
 /// - accept connection
 /// - receive files
 /// - send files
-pub fn run_v1<A, P, I, F>(
+pub fn run_v1_0<A, P, I, F>(
     app: A,
     files_to_send: impl Iterator<Item = P>,
     create_listener: F,
@@ -112,13 +132,12 @@ where
     };
 
     // Accept authenticated connection
-    let mut stream =
-        accept_authenticated_stream(incoming_streams, |s| app.auth(s)).with_context(|| {
-            format!(
-                "Failed to accept authenticated connection on {}",
-                listen_addr
-            )
-        })?;
+    let stream = accept_authenticated_stream(&app, incoming_streams).with_context(|| {
+        format!(
+            "Failed to accept authenticated connection on {}",
+            listen_addr
+        )
+    })?;
 
     // Stop broadcaster after connection is established
     if let Some((stop, handle)) = broadcaster {
@@ -128,18 +147,11 @@ where
             .map_err(|_| anyhow::anyhow!("Broadcaster thread panicked"))?;
     }
 
-    /*
-    if !match_bytes("fs-share-v1.0.0\n", &mut stream)? {
-        anyhow::bail!("Version Not Match");
-    } else {
-        stream.write_all(b":accept:")?;
-        stream.flush()?;
-        //stream.write_all(b":reject:");
-    };
-    */
-
     // Upgrade stream (e.g., encryption)
-    let mut stream = app.upgrade_stream()(stream)?;
+    let mut stream = app.upgrade_stream(stream)?;
+
+    app.postprocess_connection(&mut stream)
+        .context("postprocess faild")?;
 
     // Receive loop
     loop {
@@ -163,36 +175,47 @@ where
     // End session
     stream.write_all(b":eof:")?;
     stream.flush()?;
-
     Ok(())
 }
-
-const VERSION: &str = "";
 
 /// Accept first authenticated stream from incoming connections.
 ///
 /// Iterates over incoming streams and returns the first one
 /// that passes authentication.
-fn accept_authenticated_stream<T, L>(
-    incoming: L,
-    auth: impl Fn(&mut T) -> io::Result<bool>,
-) -> io::Result<T>
+fn accept_authenticated_stream<A: App, L>(app: &A, incoming: L) -> anyhow::Result<A::Stream>
 where
-    T: Read + Write,
-    L: Iterator<Item = io::Result<T>>,
+    L: Iterator<Item = io::Result<A::Stream>>,
 {
     for stream in incoming {
         let mut stream = match stream {
             Ok(s) => s,
             Err(_) => continue,
         };
-        match auth(&mut stream) {
+        match app.preprocess_connection(&mut stream) {
+            Ok(false) | Err(_) => continue,
+            _ => {}
+        }
+
+        match match_bytes("fs-share:v1.0\n", &mut stream) {
+            Ok(true) => {
+                stream.write_all(b":accept:")?;
+                stream.flush()?;
+            }
+            Ok(false) => {
+                let _ = stream.write_all(b":reject:");
+                let _ = stream.flush();
+                continue;
+            }
+            Err(_) => continue,
+        }
+
+        match app.auth(&mut stream) {
             Ok(true) => return Ok(stream),
             _ => continue,
         }
     }
 
-    Err(io::Error::other("No authenticated connection found"))
+    anyhow::bail!("No authenticated connection found")
 }
 
 fn match_bytes<B: AsRef<[u8]>, R: Read>(bytes: B, mut reader: R) -> anyhow::Result<bool> {

@@ -1,22 +1,23 @@
 use std::{
     borrow::Cow,
-    io::{self, Read, Write},
-    net::{Ipv4Addr, SocketAddr, SocketAddrV4},
+    io::{Read, Write},
+    net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream},
     path::{Path, PathBuf},
 };
 
+use anyhow::Context;
 use fs_share_utils::{broadcast::sender::Broadcaster, pb::ProgressBar, receiver::App};
 
-pub struct ReceiverApp<T, U> {
+pub struct ReceiverApp<U> {
     pub broadcast_addr: SocketAddr,
     pub download_dir: PathBuf,
     pub disable_broadcaster: bool,
-    pub upgrade_stream: Box<dyn Fn(T) -> anyhow::Result<U> + 'static>,
+    pub upgrade_stream: Box<dyn Fn(TcpStream) -> anyhow::Result<U> + 'static>,
     pub pb: Box<dyn Fn(u64) -> Box<dyn ProgressBar>>,
 }
 
-impl<T: Read + Write, U: Read + Write> App for ReceiverApp<T, U> {
-    type Stream = T;
+impl<U: Read + Write> App for ReceiverApp<U> {
+    type Stream = TcpStream;
     type UpgradeStream = U;
     fn prefix(&self) -> &str {
         "v1.fs-share"
@@ -30,14 +31,21 @@ impl<T: Read + Write, U: Read + Write> App for ReceiverApp<T, U> {
     fn disable_broadcaster(&self) -> bool {
         self.disable_broadcaster
     }
-    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
-        &*self.upgrade_stream
+    fn upgrade_stream(&self, stream: Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
+        (*self.upgrade_stream)(stream)
+    }
+    fn preprocess_connection(&self, stream: &mut Self::Stream) -> anyhow::Result<bool> {
+        let addr = stream.local_addr()?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .with_context(|| format!("Faild to set read timeout on {}", addr))?;
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_millis(100)))
+            .with_context(|| format!("Faild to set write timeout on {}", addr))?;
+        Ok(true)
     }
     fn create_progress_bar(&self, n: u64) -> Box<dyn ProgressBar> {
         (self.pb)(n)
-    }
-    fn auth(&self, _stream: &mut Self::Stream) -> io::Result<bool> {
-        Ok(true)
     }
     fn start_broadcaster(
         &self,

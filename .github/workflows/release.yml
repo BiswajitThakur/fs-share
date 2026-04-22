@@ -42,6 +42,7 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             os: ubuntu-latest
 
+          # Linux
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-latest
 
@@ -49,11 +50,16 @@ jobs:
           - target: x86_64-apple-darwin
             os: macos-latest
 
+          # macOS
           - target: aarch64-apple-darwin
             os: macos-latest
 
           # Windows
           - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+          # Windows
+          - target: aarch64-pc-windows-msvc
             os: windows-latest
 
           # Android
@@ -104,5 +110,6 @@ jobs:
         with:
           bin: ${{ env.BINARY_NAME }}
           target: ${{ matrix.target }}
+          checksum: "sha256"
           tar: unix
           zip: windows

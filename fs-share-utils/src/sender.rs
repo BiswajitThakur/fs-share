@@ -64,14 +64,30 @@ pub trait App {
     /// Directory for saving received files
     fn download_dir<'a>(&'a self) -> Cow<'a, Path>;
 
+    /// Pre-process an incoming connection.
+    ///
+    /// This method is called immediately after a connection is accepted,
+    /// and before authentication or stream upgrade.
+    fn preprocess_connection(&self, stream: &mut Self::Stream) -> anyhow::Result<()> {
+        let _ = stream;
+        Ok(())
+    }
     /// Authenticate connection (default: accept all)
-    fn auth(&self, stream: &mut Self::Stream) -> io::Result<bool> {
+    fn auth(&self, stream: &mut Self::Stream) -> anyhow::Result<bool> {
         let _ = stream;
         Ok(true)
     }
 
     /// Upgrade stream (e.g., encryption/handshake)
-    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream>;
+    fn upgrade_stream(&self, stream: Self::Stream) -> anyhow::Result<Self::UpgradeStream>;
+
+    /// Post-process upgraded connection
+    ///
+    /// Called after stream upgrade (e.g., encryption established).
+    fn postprocess_connection(&self, stream: &mut Self::UpgradeStream) -> anyhow::Result<()> {
+        let _ = stream;
+        Ok(())
+    }
 
     /// Create progress bar
     fn create_progress_bar(&self, total: u64) -> Box<dyn ProgressBar>;
@@ -95,7 +111,7 @@ pub trait App {
 /// - receiver discovery
 /// - connection
 /// - file transfer (send + receive)
-pub fn run_v1<A, P, ConnectFn, R>(
+pub fn run_v1_0<A, P, ConnectFn, R>(
     app: A,
     files_to_send: impl Iterator<Item = P>,
     connect: ConnectFn,
@@ -103,7 +119,7 @@ pub fn run_v1<A, P, ConnectFn, R>(
 where
     A: App,
     P: AsRef<Path>,
-    ConnectFn: Fn(&A, SocketAddr) -> anyhow::Result<A::Stream>,
+    ConnectFn: Fn(SocketAddr) -> io::Result<A::Stream>,
     R: for<'a> TryFrom<(SocketAddr, PayloadReader<'a>)>
         + ReceiverData
         + Clone
@@ -131,11 +147,33 @@ where
     let receiver_addr = receiver_addr.context("No valid receiver address found via broadcast")?;
 
     // Establish connection
-    let stream = connect(&app, receiver_addr)
+    let mut stream = connect(receiver_addr)
         .with_context(|| format!("Failed to connect to {}", receiver_addr))?;
 
+    app.preprocess_connection(&mut stream)
+        .context("Pre-processing faild")?;
+
+    if !app.auth(&mut stream)? {
+        anyhow::bail!("authentication failed");
+    };
+
+    stream.write_all(b"fs-share:v1.0\n")?;
+    stream.flush()?;
+    let mut buf = [0u8; 8];
+    stream.read_exact(&mut buf)?;
+    match &buf {
+        b":reject:" => {
+            anyhow::bail!("faild to connect, version not match");
+        }
+        b":accept:" => {}
+        _ => anyhow::bail!("invalid connection"),
+    }
+
     // Upgrade stream
-    let mut stream = app.upgrade_stream()(stream)?;
+    let mut stream = app.upgrade_stream(stream)?;
+
+    app.postprocess_connection(&mut stream)
+        .context("postprocess failed")?;
 
     // Send files
     for path in files_to_send {
@@ -159,6 +197,5 @@ where
             _ => unreachable!("Invalid protocol marker"),
         }
     }
-
     Ok(())
 }

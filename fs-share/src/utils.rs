@@ -90,14 +90,12 @@ pub fn receiver_upgrade_stream(mut stream: TcpStream) -> anyhow::Result<TcpStrea
         .context("Failed to send upgrade acknowledgement")?;
     stream.flush().context("Failed to flush stream")?;
     stream.set_read_timeout(None)?;
+    stream.set_write_timeout(None)?;
     Ok(stream)
 }
 
 pub fn sender_upgrade_stream(mut stream: TcpStream) -> anyhow::Result<TcpStream> {
     let addr = stream.local_addr()?;
-    stream
-        .set_read_timeout(Some(Duration::from_millis(300)))
-        .with_context(|| format!("Faild to set read timeout on {}", addr))?;
     stream
         .write_all(b"v1.fs-share")
         .context("Failed to send protocol header")?;
@@ -111,6 +109,7 @@ pub fn sender_upgrade_stream(mut stream: TcpStream) -> anyhow::Result<TcpStream>
         );
     };
     stream.set_read_timeout(None)?;
+    stream.set_write_timeout(None)?;
     Ok(stream)
 }
 

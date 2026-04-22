@@ -2,13 +2,14 @@ use std::{
     borrow::Cow,
     fmt::Display,
     io::{Read, Write},
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream},
     path::{Path, PathBuf},
     sync::mpsc::Receiver,
     thread::JoinHandle,
     time::Duration,
 };
 
+use anyhow::Context;
 use colored::Colorize;
 use fs_share_utils::{
     broadcast::receiver::PayloadReader,
@@ -91,16 +92,16 @@ impl RD for ReceiverData {
     }
 }
 
-pub struct SenderAppV1<T, U> {
+pub struct SenderAppV1<U> {
     pub broadcast_addr: SocketAddr,
     pub receiver_addr: Option<SocketAddr>,
     pub download_dir: PathBuf,
-    pub upgrade_stream: Box<dyn Fn(T) -> anyhow::Result<U> + 'static>,
+    pub upgrade_stream: Box<dyn Fn(TcpStream) -> anyhow::Result<U> + 'static>,
     pub pb: Box<dyn Fn(u64) -> Box<dyn ProgressBar>>,
 }
 
-impl<T: Read + Write, U: Read + Write> App for SenderAppV1<T, U> {
-    type Stream = T;
+impl<U: Read + Write> App for SenderAppV1<U> {
+    type Stream = TcpStream;
     type UpgradeStream = U;
     fn prefix(&self) -> &str {
         "v1.fs-share"
@@ -114,11 +115,21 @@ impl<T: Read + Write, U: Read + Write> App for SenderAppV1<T, U> {
     fn download_dir<'a>(&'a self) -> Cow<'a, Path> {
         Cow::Borrowed(&self.download_dir)
     }
-    fn upgrade_stream(&self) -> impl Fn(Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
-        &*self.upgrade_stream
+    fn upgrade_stream(&self, stream: Self::Stream) -> anyhow::Result<Self::UpgradeStream> {
+        (*self.upgrade_stream)(stream)
     }
     fn create_progress_bar(&self, n: u64) -> Box<dyn ProgressBar> {
         (self.pb)(n)
+    }
+    fn preprocess_connection(&self, stream: &mut Self::Stream) -> anyhow::Result<()> {
+        let addr = stream.local_addr()?;
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_millis(100)))
+            .with_context(|| format!("Faild to set read timeout on {}", addr))?;
+        stream
+            .set_write_timeout(Some(std::time::Duration::from_millis(100)))
+            .with_context(|| format!("Faild to set write timeout on {}", addr))?;
+        Ok(())
     }
 
     fn select_receiver_addr<V>(

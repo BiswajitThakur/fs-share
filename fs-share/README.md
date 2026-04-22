@@ -1,19 +1,12 @@
 # fs-share
 
-Fast, simple file CLI based file transfer app.
+A fast, simple cross platform CLI tool to transfer files.
 
-`fs-share` lets you send files between devices on the same network without configuration. It automatically discovers receivers or lets you connect manually.
-
-
-## Features
-
-* Fast file transfer over TCP
-* Automatic peer discovery (UDP broadcast)
-* Send multiple files
-* Works across Linux, macOS, Windows, and Android (Termux)
-
+`fs-share` allows you to send files between devices with real-time progress. It supports automatic peer discovery as well as manual connections when needed.
 
 ## Installation
+
+Make sure you have Rust installed. Then run:
 
 ```bash
 cargo install fs-share
@@ -21,51 +14,42 @@ cargo install fs-share
 
 ## Usage
 
-### 1️⃣ Start Receiver
+`fs-share` works in two modes:
+
+`send` → Send files then receive files
+`receive` → Receive files then send files
+
+One device must run send, and the other must run receive.
+
+
+### Send files from `send` mode
 
 ```bash
-fs-share receive
+fs-share send <file1> <file2> <file3> ...
 ```
 
-Optional:
+### Send files from `receive` mode
 
 ```bash
-fs-share receive --download-dir ./downloads
+fs-share receive <file1> <file2> <file3> ...
 ```
 
----
 
-### 2️⃣ Send Files
+## Manual Connection (Skip Auto Discovery)
+
+### Send files from `send` mode
 
 ```bash
-fs-share send file.txt
+fs-share send --receiver-addr <ip>:<port> <file1> <file2> ...
 ```
 
-Send multiple files:
+### Send files from `receive` mode:
 
 ```bash
-fs-share send file1.txt file2.jpg
+fs-share receive --disable-broadcast --tcp-listener-addr <ip>:<port> <file1> <file2> ...
 ```
 
----
-
-## 🔗 Manual Connection (Skip Auto Discovery)
-
-### Receiver:
-
-```bash
-fs-share receive --disable-broadcast --tcp-listener-addr 0.0.0.0:8080
-```
-
-### Sender:
-
-```bash
-fs-share send --receiver-addr 192.168.1.10:8080 file.txt
-```
-
----
-
-## ⚙️ Options
+## Options
 
 ### Sender
 
@@ -80,8 +64,6 @@ Options:
       --broadcast-port <BROADCAST_PORT>  UDP broadcast port for discovering receivers [default: 7755]
   -h, --help                             Print help
 ```
-
----
 
 ### Receiver
 
@@ -99,48 +81,7 @@ Options:
 ```
 
 
-## How It Works
-
-1. Receiver starts and optionally broadcasts its presence
-2. Sender discovers receiver via UDP broadcast
-3. TCP connection is established
-4. Files are transferred
-
-
-## 🧪 Example
-
-```bash
-# Terminal 1 (Receiver)
-fs-share receive
-
-# Terminal 2 (Sender)
-fs-share send hello.txt
-```
-
----
-
-## 📱 Termux (Android)
-
-Download Android binary:
-
-```bash
-chmod +x fs-share
-./fs-share receive
-```
-
----
-
-## 🛠️ Build from Source
-
-```bash
-git clone https://github.com/your-username/fs-share
-cd fs-share
-cargo build --release
-```
-
----
-
-## 🤝 Contributing
+## Contributing
 
 Pull requests are welcome!
 Feel free to open issues for bugs or feature requests.

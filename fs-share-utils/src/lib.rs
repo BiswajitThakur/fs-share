@@ -29,13 +29,9 @@
 //! Core logic for sending files over TCP.
 //! Responsible for encoding metadata and streaming file contents.
 //!
-//! ### [`tf`]
-//! Transfer-related helpers (shared logic between sender and receiver).
-//! Includes utilities for stream upgrade, protocol handling, and data framing.
-//!
 pub mod broadcast;
 pub mod ip;
 pub mod pb;
 pub mod receiver;
 pub mod sender;
-pub mod tf;
+pub(crate) mod tf;

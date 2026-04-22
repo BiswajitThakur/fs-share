@@ -28,7 +28,7 @@ fn create_buffer(size: usize) -> Box<[u8]> {
     unsafe { v.assume_init() }
 }
 
-pub fn sender_send_file<A: SenderApp + ?Sized>(
+pub(crate) fn sender_send_file<A: SenderApp + ?Sized>(
     app: &A,
     path: impl AsRef<Path>,
     stream: &mut A::UpgradeStream,
@@ -73,7 +73,7 @@ pub fn sender_send_file<A: SenderApp + ?Sized>(
     pb.finish();
     Ok(())
 }
-pub fn receiver_send_file<A: ReceiverApp + ?Sized>(
+pub(crate) fn receiver_send_file<A: ReceiverApp + ?Sized>(
     app: &A,
     path: impl AsRef<Path>,
     stream: &mut A::UpgradeStream,
@@ -119,7 +119,7 @@ pub fn receiver_send_file<A: ReceiverApp + ?Sized>(
     Ok(())
 }
 
-pub fn sender_receive_file<A: SenderApp + ?Sized>(
+pub(crate) fn sender_receive_file<A: SenderApp + ?Sized>(
     app: &A,
     stream: &mut A::UpgradeStream,
 ) -> anyhow::Result<()> {
@@ -179,7 +179,7 @@ pub fn sender_receive_file<A: SenderApp + ?Sized>(
     Ok(())
 }
 
-pub fn receiver_receive_file<A: ReceiverApp + ?Sized>(
+pub(crate) fn receiver_receive_file<A: ReceiverApp + ?Sized>(
     app: &A,
     stream: &mut A::UpgradeStream,
 ) -> anyhow::Result<PathBuf> {
@@ -238,4 +238,3 @@ pub fn receiver_receive_file<A: ReceiverApp + ?Sized>(
 
     Ok(save_path)
 }
-

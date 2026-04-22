@@ -8,6 +8,7 @@ keywords = ["file-transfer", "p2p", "udp", "tcp", "cli"]
 categories = ["command-line-utilities", "network-programming"]
 repository = "https://github.com/BiswajitThakur/fs-share.git"
 authors = ["Biswajit Thakur <biswajit733127@gmail.com>"]
+license = "MIT"
 
 [dependencies]
 fs-share-utils = { version = "1.0.0", path = "../fs-share-utils" }

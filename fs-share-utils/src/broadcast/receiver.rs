@@ -119,19 +119,6 @@ impl BroadcastReceiver {
     /// - Deduplicates data per sender (`SocketAddr`)
     /// - Sends only new or changed data
     /// - Ignores invalid payloads silently
-    ///
-    /// ## Example
-    ///
-    /// ```rust,no_run
-    /// let (stop, rx, handle) = receiver.start::<MyData>();
-    ///
-    /// while let Ok((addr, data)) = rx.recv() {
-    ///     println!("{} -> {:?}", addr, data);
-    /// }
-    ///
-    /// stop();
-    /// handle.join().unwrap();
-    /// ```
     pub fn start<U>(
         self,
     ) -> (
@@ -262,4 +249,3 @@ impl BroadcastReceiverBuilder {
         })
     }
 }
-

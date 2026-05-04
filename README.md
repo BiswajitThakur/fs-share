@@ -17,6 +17,7 @@ cargo install fs-share
 `fs-share` works in two modes:
 
 `send` → Send files then receive files
+
 `receive` → Receive files then send files
 
 One device must run send, and the other must run receive.

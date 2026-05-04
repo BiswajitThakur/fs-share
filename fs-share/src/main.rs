@@ -1,6 +1,5 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
 
-use anyhow::Context;
 use clap::Parser;
 use fs_share_utils::{receiver::run_v1_0 as run_receiver_app, sender::run_v1_0 as run_sender_app};
 use socket2::{Domain, Socket, Type};
@@ -54,7 +53,8 @@ fn main() -> anyhow::Result<()> {
                 let socket = Socket::new(domain, Type::STREAM, None)?;
                 socket.set_recv_buffer_size(256 * 1024)?;
                 socket.set_send_buffer_size(256 * 1024)?;
-                socket.connect(&addr.into())?;
+                socket.connect(&addr.into())?; // ERROR, here it faild
+                dbg!("--------------------");
                 let stream = TcpStream::from(socket);
                 stream.set_nodelay(true)?;
                 Ok(stream)

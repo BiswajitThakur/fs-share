@@ -81,6 +81,14 @@ pub fn create_tcp_listener(
     struct Dummy {
         inner: TcpListener,
     }
+    impl Drop for Dummy {
+        fn drop(&mut self) {
+            match self.inner.local_addr() {
+                Ok(addr) => println!("TcpListener closed: {}", addr),
+                Err(e) => println!("TcpListener closed (unknown addr: {})", e),
+            }
+        }
+    }
     impl Iterator for Dummy {
         type Item = std::io::Result<TcpStream>;
         fn next(&mut self) -> Option<Self::Item> {
@@ -110,6 +118,7 @@ pub fn create_tcp_listener(
     socket
         .bind(&addr.into())
         .with_context(|| format!("Failed to bind TCP listener on {}", addr))?;
+    socket.listen(1024).context("Failed to listen on socket")?;
 
     let listener: TcpListener = socket.into();
     let listener_addr = listener

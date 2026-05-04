@@ -53,8 +53,7 @@ fn main() -> anyhow::Result<()> {
                 let socket = Socket::new(domain, Type::STREAM, None)?;
                 socket.set_recv_buffer_size(256 * 1024)?;
                 socket.set_send_buffer_size(256 * 1024)?;
-                socket.connect(&addr.into())?; // ERROR, here it faild
-                dbg!("--------------------");
+                socket.connect(&addr.into())?;
                 let stream = TcpStream::from(socket);
                 stream.set_nodelay(true)?;
                 Ok(stream)

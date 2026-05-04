@@ -110,6 +110,5 @@ jobs:
         with:
           bin: ${{ env.BINARY_NAME }}
           target: ${{ matrix.target }}
-          checksum: "sha256"
           tar: unix
           zip: windows

@@ -50,6 +50,12 @@ fs-share send --receiver-addr <ip>:<port> <file1> <file2> ...
 fs-share receive --disable-broadcast --tcp-listener-addr <ip>:<port> <file1> <file2> ...
 ```
 
+## 📸 Screenrecord
+
+![Demo Linux](./screenrecord/screenrecord-linux-v1.0.1.gif)
+
+![Demo Android](./screenrecord/screenrecord-android-v1.0.1.gif)
+
 ## Options
 
 ### Sender
@@ -86,4 +92,3 @@ Options:
 
 Pull requests are welcome!
 Feel free to open issues for bugs or feature requests.
-

@@ -21,7 +21,7 @@ use anyhow::Context;
 use crate::receiver::App as ReceiverApp;
 use crate::sender::App as SenderApp;
 
-const BUFFER_SIZE: usize = 32 * 1024;
+const BUFFER_SIZE: usize = 256 * 1024;
 
 fn create_buffer(size: usize) -> Box<[u8]> {
     let v = Box::new_zeroed_slice(size);

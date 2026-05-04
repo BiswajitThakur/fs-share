@@ -1,6 +1,6 @@
 [package]
 name = "fs-share"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 description = "A cross-platform file-sharing CLI application"
 homepage = "https://github.com/BiswajitThakur/fs-share.git"
@@ -11,7 +11,8 @@ authors = ["Biswajit Thakur <biswajit733127@gmail.com>"]
 license = "MIT"
 
 [dependencies]
-fs-share-utils = { version = "1.0.0", path = "../fs-share-utils" }
+socket2 = "0.6.3"
+fs-share-utils = { version = "1.0.1", path = "../fs-share-utils" }
 indicatif = "0.17.9"
 colored = "2"
 anyhow = { workspace = true }

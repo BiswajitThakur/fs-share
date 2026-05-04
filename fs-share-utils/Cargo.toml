@@ -1,6 +1,6 @@
 [package]
 name = "fs-share-utils"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2024"
 
 description = "Core utilities for fs-share: broadcasting, networking, and file transfer primitives."
